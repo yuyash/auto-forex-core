@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Core package for AutoForex app."
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = ["numpy>=2.5.0", "pandas>=3.0.3", "pydantic>=2.13.4"]
+dependencies = [
+    "numpy>=2.5.0",
+    "pandas>=3.0.3",
+    "pycountry>=26.2.16",
+    "pydantic>=2.13.4",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.24,<0.10.0"]
@@ -30,7 +35,7 @@ line-ending = "lf"
 quote-style = "double"
 
 [tool.pytest.ini_options]
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]
 testpaths = ["tests"]
 
 [tool.ty.environment]

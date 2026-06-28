@@ -1,0 +1,169 @@
+"""Strategy abstraction for AutoForex algorithms."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from decimal import Decimal
+from logging import Logger
+from typing import Any
+from uuid import UUID
+
+from pydantic import Field
+
+from core.events import StrategyEvent
+from core.logging import get_logger
+from core.models import (
+    Candle,
+    CurrencyPair,
+    DomainModel,
+    Metadata,
+    StrategyParameters,
+    StrategyState,
+    Tick,
+)
+from core.tasks import TaskType
+
+_LOGGER: Logger = get_logger(__name__)
+
+
+class StrategyContext(DomainModel):
+    """Runtime context passed to strategies by task executors."""
+
+    task_id: UUID
+    task_type: TaskType
+    instrument: CurrencyPair
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @property
+    def pip_size(self) -> Decimal:
+        """Return the instrument-derived pip size."""
+        return self.instrument.pip_size
+
+
+class StrategyResult(DomainModel):
+    """Strategy output for a single lifecycle or market-data callback."""
+
+    events: tuple[StrategyEvent, ...] = ()
+    state: StrategyState = Field(default_factory=StrategyState)
+
+
+class Strategy(ABC):
+    """Base class for concrete trading strategies such as Snowball."""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        instrument: CurrencyPair | str,
+        parameters: StrategyParameters | Mapping[str, Any] | None = None,
+    ) -> None:
+        _LOGGER.debug(
+            "Initializing strategy %s",
+            name,
+            extra={
+                "strategy_name": name,
+                "instrument": str(instrument),
+                "strategy_class": self.__class__.__name__,
+            },
+        )
+        self.name = name
+        self.instrument = CurrencyPair.model_validate(instrument)
+        self.parameters = self.normalize_parameters(parameters or {})
+        self.validate_parameters(self.parameters)
+        _LOGGER.info(
+            "Initialized strategy %s for %s",
+            self.name,
+            self.instrument,
+            extra={
+                "strategy_name": self.name,
+                "instrument": str(self.instrument),
+                "strategy_class": self.__class__.__name__,
+                "parameter_count": len(self.parameters.values),
+            },
+        )
+
+    @property
+    def pip_size(self) -> Decimal:
+        """Return the instrument-derived pip size."""
+        return self.instrument.pip_size
+
+    @classmethod
+    def default_parameters(cls) -> StrategyParameters:
+        """Return strategy-specific default parameters."""
+        return StrategyParameters()
+
+    @classmethod
+    def normalize_parameters(
+        cls,
+        parameters: StrategyParameters | Mapping[str, Any],
+    ) -> StrategyParameters:
+        """Normalize external parameters into the strategy's canonical shape."""
+        normalized = cls.default_parameters().merge(StrategyParameters.model_validate(parameters))
+        _LOGGER.debug(
+            "Normalized strategy parameters for %s",
+            cls.__name__,
+            extra={
+                "strategy_class": cls.__name__,
+                "parameter_count": len(normalized.values),
+            },
+        )
+        return normalized
+
+    @classmethod
+    def validate_parameters(cls, parameters: StrategyParameters) -> None:
+        """Validate strategy parameters before a task starts."""
+        _LOGGER.debug(
+            "Validated strategy parameters for %s",
+            cls.__name__,
+            extra={
+                "strategy_class": cls.__name__,
+                "parameter_count": len(parameters.values),
+            },
+        )
+        _ = parameters
+
+    def on_start(self, context: StrategyContext) -> StrategyResult:
+        """Handle task start before market data is processed."""
+        _LOGGER.debug(
+            "Strategy %s handled default on_start",
+            self.name,
+            extra=self._log_extra(context=context),
+        )
+        return StrategyResult()
+
+    @abstractmethod
+    def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
+        """Process one market tick and emit strategy events."""
+
+    def on_candle(self, candle: Candle, context: StrategyContext) -> StrategyResult:
+        """Process one candle when a strategy consumes candle data."""
+        _LOGGER.debug(
+            "Strategy %s ignored candle in default on_candle",
+            self.name,
+            extra={
+                **self._log_extra(context=context),
+                "timestamp": candle.timestamp.isoformat(),
+                "granularity": str(candle.granularity),
+            },
+        )
+        return StrategyResult()
+
+    def on_stop(self, context: StrategyContext) -> StrategyResult:
+        """Handle task stop after market data processing ends."""
+        _LOGGER.debug(
+            "Strategy %s handled default on_stop",
+            self.name,
+            extra=self._log_extra(context=context),
+        )
+        return StrategyResult()
+
+    def _log_extra(self, *, context: StrategyContext) -> dict[str, str | int]:
+        return {
+            "task_id": str(context.task_id),
+            "task_type": context.task_type.value,
+            "strategy_name": self.name,
+            "strategy_class": self.__class__.__name__,
+            "instrument": str(self.instrument),
+            "parameter_count": len(self.parameters.values),
+        }
