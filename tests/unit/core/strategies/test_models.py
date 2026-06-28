@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from core.models import StrategyParameters, StrategyReference, StrategyState
+from core import StrategyParameters, StrategyReference, StrategyState
 
 
 def test_strategy_reference_models_strategy_identity() -> None:

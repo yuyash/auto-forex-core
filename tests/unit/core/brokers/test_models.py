@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from core.models import (
+from core import (
     BrokerOrderId,
     BrokerPositionId,
     CurrencyPair,

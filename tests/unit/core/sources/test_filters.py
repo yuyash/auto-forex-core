@@ -4,9 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from core.models import CurrencyPair, Tick
-from core.ports import DataSource
-from core.sources import SpreadFilter, SpreadFilteredDataSource
+from core import CurrencyPair, Tick
+from core.sources import DataSource, SpreadFilter, SpreadFilteredDataSource
 
 
 class MemoryDataSource(DataSource):
@@ -14,7 +13,7 @@ class MemoryDataSource(DataSource):
         self._ticks = tuple(ticks)
         self.closed = False
 
-    def ticks(
+    def _raw_ticks(
         self,
         *,
         instrument: CurrencyPair,

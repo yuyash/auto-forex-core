@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from core.models import (
+from core import (
     BrokerOrderId,
     CurrencyPair,
     Money,
@@ -11,7 +11,7 @@ from core.models import (
     OrderStatus,
     Position,
 )
-from core.ports import Broker
+from core.brokers import Broker
 
 
 class MemoryBroker(Broker):

@@ -2,6 +2,25 @@
 
 from importlib.metadata import version
 
+from core.accounts import Account, AccountId
+from core.brokers import (
+    Broker,
+    BrokerOrderId,
+    BrokerPositionId,
+    OrderRequest,
+    OrderRequestId,
+    OrderResult,
+    OrderResultMessageKey,
+    OrderResultReason,
+    OrderResultReasonCode,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    Position,
+    PositionSide,
+    message_key_for_order_result_reason,
+)
+from core.clock import local_timezone, now
 from core.events import (
     ErrorCategory,
     ErrorCode,
@@ -22,71 +41,52 @@ from core.events import (
     message_key_for_event_type,
     metadata_for_event_type,
 )
-from core.logging import CORE_LOGGER_NAME, configure_logging, get_logger
+from core.logging import CORE_LOGGER_NAME, LogLevel, configure_logging, get_logger
 from core.models import (
-    Account,
-    AccountId,
-    BrokerOrderId,
-    BrokerPositionId,
-    Candle,
-    CandleGranularity,
     Currency,
     CurrencyPair,
     DomainModel,
     Metadata,
     Money,
-    OrderRequest,
-    OrderRequestId,
-    OrderResult,
-    OrderResultMessageKey,
-    OrderResultReason,
-    OrderResultReasonCode,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    Position,
-    PositionSide,
-    StrategyParameters,
-    StrategyReference,
-    StrategyState,
-    Tick,
-    TickGranularity,
-    message_key_for_order_result_reason,
     new_uuid,
 )
-from core.ports import (
-    Broker,
-    DataSource,
-    Strategy,
-    StrategyContext,
-    StrategyResult,
-)
 from core.sources import (
+    Candle,
+    CandleGranularity,
     CSVCandleSchema,
     CSVDataSource,
     CSVDataSourceError,
     CSVTickSchema,
     CSVTimestampFormat,
+    DataSource,
     SpreadFilter,
     SpreadFilteredDataSource,
+    Tick,
+    TickGranularity,
+)
+from core.strategies import (
+    Strategy,
+    StrategyContext,
+    StrategyParameters,
+    StrategyReference,
+    StrategyResult,
+    StrategyState,
 )
 from core.tasks import (
     ALLOWED_TRANSITIONS,
     DEFAULT_TASK_STATE_MACHINE,
     BacktestTaskDefinition,
     BaseTaskDefinition,
-    DataSourceType,
     ExecutableTask,
     TaskAction,
     TaskDefinition,
+    TaskFailure,
     TaskStateError,
     TaskStateMachine,
     TaskStatus,
     TaskTransition,
     TaskType,
     TradingTaskDefinition,
-    assert_transition_allowed,
-    can_transition,
     normalize_task_action,
 )
 
@@ -111,7 +111,6 @@ __all__ = [
     "Currency",
     "CurrencyPair",
     "DataSource",
-    "DataSourceType",
     "DomainModel",
     "ErrorCategory",
     "ErrorCode",
@@ -124,6 +123,7 @@ __all__ = [
     "EventType",
     "EventTypeMetadata",
     "ExecutableTask",
+    "LogLevel",
     "Metadata",
     "Money",
     "OrderRequest",
@@ -151,6 +151,7 @@ __all__ = [
     "StrategyState",
     "TaskAction",
     "TaskDefinition",
+    "TaskFailure",
     "TaskStateError",
     "TaskStateMachine",
     "TaskStatus",
@@ -161,16 +162,16 @@ __all__ = [
     "TradeSide",
     "TradingTaskDefinition",
     "__version__",
-    "assert_transition_allowed",
-    "can_transition",
     "configure_logging",
     "error_code_for_event_type",
     "get_logger",
+    "local_timezone",
     "message_key_for_event_type",
     "message_key_for_order_result_reason",
     "metadata_for_event_type",
     "new_uuid",
     "normalize_task_action",
+    "now",
 ]
 
 __version__ = version("auto-forex-core")

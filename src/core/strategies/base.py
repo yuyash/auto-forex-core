@@ -13,16 +13,12 @@ from pydantic import Field
 
 from core.events import StrategyEvent
 from core.logging import get_logger
-from core.models import (
-    Candle,
-    CurrencyPair,
-    DomainModel,
-    Metadata,
-    StrategyParameters,
-    StrategyState,
-    Tick,
-)
-from core.tasks import TaskType
+from core.models.base import DomainModel
+from core.models.metadata import Metadata
+from core.models.money import CurrencyPair
+from core.sources.models import Candle, Tick
+from core.strategies.models import StrategyParameters, StrategyState
+from core.tasks.state import TaskType
 
 _LOGGER: Logger = get_logger(__name__)
 

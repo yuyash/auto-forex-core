@@ -1,7 +1,7 @@
 import logging
 from io import StringIO
 
-from core.logging import CORE_LOGGER_NAME, configure_logging, get_logger
+from core.logging import CORE_LOGGER_NAME, LogLevel, configure_logging, get_logger
 
 
 def test_get_logger_namespaces_core_loggers() -> None:
@@ -13,7 +13,7 @@ def test_get_logger_namespaces_core_loggers() -> None:
 def test_configure_logging_sets_standalone_handler() -> None:
     stream = StringIO()
     logger = configure_logging(
-        level=logging.INFO,
+        level=LogLevel.INFO,
         stream=stream,
         format="%(levelname)s %(name)s %(message)s",
         replace_handlers=True,

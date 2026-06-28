@@ -3,27 +3,65 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, fields
+from datetime import datetime
 from logging import Logger
 from typing import Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field
 
+from core.clock import now
 from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
 from core.models.money import CurrencyPair
-from core.models.strategy import StrategyParameters, StrategyReference
+from core.strategies.models import StrategyParameters
 from core.tasks.definitions import TaskDefinition, TaskType
+from core.tasks.failure import TaskFailure
 from core.tasks.state import (
     DEFAULT_TASK_STATE_MACHINE,
     TaskAction,
     TaskStatus,
-    can_transition,
 )
 
 _LOGGER: Logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class TaskLogContext(Mapping[str, "str | int | bool | None"]):
+    """Structured logging context for an executable task lifecycle event.
+
+    Implements the mapping protocol so it can be passed straight to the
+    standard logging ``extra`` argument while remaining a typed object.
+    """
+
+    task_id: str
+    task_definition_id: str
+    task_name: str
+    task_type: str
+    task_action: str
+    task_status: str
+    task_run_count: int
+    instrument: str
+    task_previous_status: str
+    failure_reason: str = ""
+    lifecycle_timestamp: str = ""
+    transition_allowed: bool | None = None
+    is_resume: bool | None = None
+
+    def __getitem__(self, key: str) -> str | int | bool | None:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def __iter__(self) -> Iterator[str]:
+        return (field.name for field in fields(self))
+
+    def __len__(self) -> int:
+        return len(fields(self))
 
 
 class ExecutableTask(DomainModel):
@@ -32,13 +70,18 @@ class ExecutableTask(DomainModel):
     id: UUID = Field(default_factory=new_uuid)
     definition: TaskDefinition
     status: TaskStatus = TaskStatus.CREATED
-    created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: AwareDatetime = Field(default_factory=now)
     started_at: AwareDatetime | None = None
     paused_at: AwareDatetime | None = None
     stopped_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
-    failure_reason: str = ""
+    failure: TaskFailure | None = None
     run_count: int = Field(default=0, ge=0)
+
+    @property
+    def failure_reason(self) -> str:
+        """Return the failure message, or an empty string when not failed."""
+        return self.failure.message if self.failure is not None else ""
 
     @classmethod
     def from_definition(cls, definition: TaskDefinition) -> ExecutableTask:
@@ -67,16 +110,6 @@ class ExecutableTask(DomainModel):
         return self.definition.name
 
     @property
-    def strategy_name(self) -> str:
-        """Return the strategy name."""
-        return self.definition.strategy.name
-
-    @property
-    def strategy(self) -> StrategyReference:
-        """Return the strategy reference."""
-        return self.definition.strategy
-
-    @property
     def instrument(self) -> CurrencyPair:
         """Return the traded instrument."""
         return self.definition.instrument
@@ -103,7 +136,7 @@ class ExecutableTask(DomainModel):
 
     def can(self, action: TaskAction | str) -> bool:
         """Return whether the lifecycle action is valid for the current status."""
-        allowed = can_transition(self.status, action)
+        allowed = DEFAULT_TASK_STATE_MACHINE.can(self.status, action)
         _LOGGER.debug(
             "Checked executable task action permission",
             extra=self._log_extra(
@@ -115,7 +148,7 @@ class ExecutableTask(DomainModel):
 
     def start(self, *, at: datetime | None = None) -> Self:
         """Start a new task run or resume a paused task."""
-        timestamp = at or datetime.now(UTC)
+        timestamp = at or now()
         is_resume = self.status == TaskStatus.PAUSED
         _LOGGER.debug(
             "Starting executable task %s",
@@ -132,7 +165,7 @@ class ExecutableTask(DomainModel):
             paused_at=None,
             stopped_at=None,
             completed_at=None,
-            failure_reason="",
+            failure=None,
             run_count=self.run_count if is_resume else self.run_count + 1,
         )
         self._log_transition(TaskAction.START, task)
@@ -140,7 +173,7 @@ class ExecutableTask(DomainModel):
 
     def pause(self, *, at: datetime | None = None) -> Self:
         """Pause a running task without discarding its runtime state."""
-        timestamp = at or datetime.now(UTC)
+        timestamp = at or now()
         _LOGGER.debug(
             "Pausing executable task %s",
             self.id,
@@ -158,7 +191,7 @@ class ExecutableTask(DomainModel):
 
     def stop(self, *, at: datetime | None = None) -> Self:
         """Stop a running or paused task."""
-        timestamp = at or datetime.now(UTC)
+        timestamp = at or now()
         _LOGGER.debug(
             "Stopping executable task %s",
             self.id,
@@ -177,7 +210,7 @@ class ExecutableTask(DomainModel):
 
     def restart(self, *, at: datetime | None = None) -> Self:
         """Start the task again as a fresh run."""
-        timestamp = at or datetime.now(UTC)
+        timestamp = at or now()
         _LOGGER.debug(
             "Restarting executable task %s",
             self.id,
@@ -192,7 +225,7 @@ class ExecutableTask(DomainModel):
             paused_at=None,
             stopped_at=None,
             completed_at=None,
-            failure_reason="",
+            failure=None,
             run_count=self.run_count + 1,
         )
         self._log_transition(TaskAction.RESTART, task)
@@ -200,7 +233,7 @@ class ExecutableTask(DomainModel):
 
     def complete(self, *, at: datetime | None = None) -> Self:
         """Mark a running task as completed."""
-        timestamp = at or datetime.now(UTC)
+        timestamp = at or now()
         _LOGGER.debug(
             "Completing executable task %s",
             self.id,
@@ -217,26 +250,44 @@ class ExecutableTask(DomainModel):
         self._log_transition(TaskAction.COMPLETE, task)
         return task
 
-    def fail(self, reason: str, *, at: datetime | None = None) -> Self:
-        """Mark the task as failed."""
-        timestamp = at or datetime.now(UTC)
+    def fail(
+        self,
+        reason: str | TaskFailure | BaseException,
+        *,
+        at: datetime | None = None,
+    ) -> Self:
+        """Mark the task as failed.
+
+        ``reason`` may be a plain message, a prebuilt :class:`TaskFailure`, or an
+        exception (whose type and traceback are captured).
+        """
+        failure = self._coerce_failure(reason)
+        timestamp = at or now()
         _LOGGER.debug(
             "Failing executable task %s",
             self.id,
             extra=self._log_extra(
                 task_action=TaskAction.FAIL.value,
                 lifecycle_timestamp=timestamp.isoformat(),
-                failure_reason=reason,
+                failure_reason=failure.message,
             ),
         )
         task = self.evolve(
             status=self._next_status(TaskAction.FAIL),
             paused_at=None,
             stopped_at=timestamp,
-            failure_reason=reason,
+            failure=failure,
         )
-        self._log_transition(TaskAction.FAIL, task, failure_reason=reason)
+        self._log_transition(TaskAction.FAIL, task, failure_reason=failure.message)
         return task
+
+    @staticmethod
+    def _coerce_failure(reason: str | TaskFailure | BaseException) -> TaskFailure:
+        if isinstance(reason, TaskFailure):
+            return reason
+        if isinstance(reason, BaseException):
+            return TaskFailure.from_exception(reason)
+        return TaskFailure.of(reason)
 
     def _next_status(self, action: TaskAction) -> TaskStatus:
         _LOGGER.debug(
@@ -256,9 +307,8 @@ class ExecutableTask(DomainModel):
         *,
         failure_reason: str = "",
     ) -> None:
-        level = _level_for_action(action)
         _LOGGER.log(
-            level,
+            self._level_for_action(action),
             "Task %s lifecycle action %s transitioned %s to %s",
             self.id,
             action.value,
@@ -271,6 +321,12 @@ class ExecutableTask(DomainModel):
             ),
         )
 
+    @staticmethod
+    def _level_for_action(action: TaskAction) -> int:
+        if action == TaskAction.FAIL:
+            return logging.ERROR
+        return logging.INFO
+
     def _log_extra(
         self,
         *,
@@ -280,27 +336,19 @@ class ExecutableTask(DomainModel):
         lifecycle_timestamp: str = "",
         transition_allowed: bool | None = None,
         is_resume: bool | None = None,
-    ) -> dict[str, str | int | bool | None]:
-        return {
-            "task_id": str(self.id),
-            "task_definition_id": str(self.definition_id),
-            "task_name": self.name,
-            "task_type": self.task_type.value,
-            "task_action": task_action,
-            "task_previous_status": task_previous_status or self.status.value,
-            "task_status": self.status.value,
-            "task_run_count": self.run_count,
-            "strategy_name": self.strategy_name,
-            "strategy": str(self.strategy),
-            "instrument": str(self.instrument),
-            "failure_reason": failure_reason,
-            "lifecycle_timestamp": lifecycle_timestamp,
-            "transition_allowed": transition_allowed,
-            "is_resume": is_resume,
-        }
-
-
-def _level_for_action(action: TaskAction) -> int:
-    if action == TaskAction.FAIL:
-        return logging.ERROR
-    return logging.INFO
+    ) -> TaskLogContext:
+        return TaskLogContext(
+            task_id=str(self.id),
+            task_definition_id=str(self.definition_id),
+            task_name=self.name,
+            task_type=self.task_type.value,
+            task_action=task_action,
+            task_previous_status=task_previous_status or self.status.value,
+            task_status=self.status.value,
+            task_run_count=self.run_count,
+            instrument=str(self.instrument),
+            failure_reason=failure_reason,
+            lifecycle_timestamp=lifecycle_timestamp,
+            transition_allowed=transition_allowed,
+            is_resume=is_resume,
+        )

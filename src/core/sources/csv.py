@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import gzip
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from enum import StrEnum
@@ -13,9 +13,11 @@ from os import PathLike
 from pathlib import Path
 from typing import IO, Any
 
+from core.clock import local_timezone
 from core.logging import get_logger
-from core.models import Candle, CurrencyPair, Metadata, Tick
-from core.ports import DataSource
+from core.models import CurrencyPair, Metadata
+from core.sources.base import DataSource
+from core.sources.models import Candle, Tick
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -106,7 +108,7 @@ class _CSVRow:
 
 
 class CSVDataSource(DataSource):
-    """Data source that yields ticks and candles from CSV files.
+    """Data source that yields ticks and candles from one or more CSV files.
 
     Tick CSV columns default to: timestamp, instrument, bid, ask, mid.
     Candle CSV columns default to: timestamp, instrument, granularity, open,
@@ -115,6 +117,20 @@ class CSVDataSource(DataSource):
     Columns prefixed with ``metadata.`` are collected into the model metadata.
     If instrument or granularity columns are absent or empty, the values passed
     to ``ticks`` or ``candles`` are used.
+
+    Multiple files are read in the order given, which makes this suitable for
+    streaming across daily archives (for example Polygon-style ``YYYY-MM-DD``
+    exports) without materializing an intermediate per-instrument file. When the
+    schema names an instrument column, rows are filtered by that column's raw
+    text *before* being parsed into models, so reading one instrument out of a
+    large multi-instrument archive does not validate every row. Build a Polygon
+    forex quote source with::
+
+        CSVDataSource.from_directory(
+            "data/quotes", tick_schema=CSVTickSchema.polygon_forex_quotes()
+        )
+
+    Pass ``.gz`` paths for transparent gzip decompression.
     """
 
     def __init__(
@@ -122,27 +138,82 @@ class CSVDataSource(DataSource):
         *,
         tick_path: str | PathLike[str] | None = None,
         candle_path: str | PathLike[str] | None = None,
+        tick_paths: Sequence[str | PathLike[str]] | None = None,
+        candle_paths: Sequence[str | PathLike[str]] | None = None,
         tick_schema: CSVTickSchema | None = None,
         candle_schema: CSVCandleSchema | None = None,
         encoding: str = "utf-8",
-        assume_timezone: tzinfo = UTC,
+        assume_timezone: tzinfo | None = None,
     ) -> None:
-        self.tick_path = Path(tick_path) if tick_path is not None else None
-        self.candle_path = Path(candle_path) if candle_path is not None else None
+        self.tick_paths = self._resolve_paths(single=tick_path, multiple=tick_paths, label="tick")
+        self.candle_paths = self._resolve_paths(
+            single=candle_path, multiple=candle_paths, label="candle"
+        )
         self.tick_schema = tick_schema or CSVTickSchema()
         self.candle_schema = candle_schema or CSVCandleSchema()
         self.encoding = encoding
-        self.assume_timezone = assume_timezone
+        # Naive CSV timestamps are interpreted in this zone; defaults to local.
+        self.assume_timezone = assume_timezone or local_timezone()
 
-    def ticks(
+    @classmethod
+    def from_directory(
+        cls,
+        directory: str | PathLike[str],
+        *,
+        tick_pattern: str | None = None,
+        candle_pattern: str | None = None,
+        **kwargs: Any,
+    ) -> CSVDataSource:
+        """Create a source from files matching glob patterns in ``directory``.
+
+        Matched files are sorted lexicographically, which keeps ``YYYY-MM-DD``
+        daily exports in chronological order. Provide ``tick_pattern`` and/or
+        ``candle_pattern`` (for example ``"*.csv.gz"``). Remaining keyword
+        arguments are forwarded to the constructor.
+        """
+        base = Path(directory)
+        if tick_pattern is None and candle_pattern is None:
+            msg = "provide tick_pattern and/or candle_pattern"
+            raise ValueError(msg)
+        if tick_pattern is not None:
+            kwargs["tick_paths"] = cls._glob_sorted(base, tick_pattern)
+        if candle_pattern is not None:
+            kwargs["candle_paths"] = cls._glob_sorted(base, candle_pattern)
+        return cls(**kwargs)
+
+    @staticmethod
+    def _glob_sorted(base: Path, pattern: str) -> list[Path]:
+        matched = sorted(base.glob(pattern))
+        if not matched:
+            msg = f"no files matching {pattern!r} found in {base}"
+            raise FileNotFoundError(msg)
+        return matched
+
+    @staticmethod
+    def _resolve_paths(
+        *,
+        single: str | PathLike[str] | None,
+        multiple: Sequence[str | PathLike[str]] | None,
+        label: str,
+    ) -> tuple[Path, ...]:
+        if single is not None and multiple is not None:
+            msg = f"provide either {label}_path or {label}_paths, not both"
+            raise ValueError(msg)
+        if multiple is not None:
+            return tuple(Path(item) for item in multiple)
+        if single is not None:
+            return (Path(single),)
+        return ()
+
+    def _raw_ticks(
         self,
         *,
         instrument: CurrencyPair,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Tick]:
-        """Yield ticks from the configured tick CSV file."""
-        if self.tick_path is None:
+        """Yield every tick from the configured tick CSV file(s)."""
+        if not self.tick_paths:
             _LOGGER.debug(
                 "CSV tick path is not configured",
                 extra={"instrument": str(instrument), "data_kind": "tick"},
@@ -150,56 +221,44 @@ class CSVDataSource(DataSource):
             return
         requested_instrument = CurrencyPair.of(instrument)
         _LOGGER.info(
-            "Loading ticks from CSV file %s",
-            self.tick_path,
+            "Loading ticks from %d CSV file(s)",
+            len(self.tick_paths),
             extra={
-                "csv_path": str(self.tick_path),
+                "csv_path": self._paths_log(self.tick_paths),
                 "instrument": str(requested_instrument),
                 "data_kind": "tick",
             },
         )
+        target = self._compact_symbol(requested_instrument)
         yielded_count = 0
-        for row in self._rows(self.tick_path):
-            tick = self._tick_from_row(row, requested_instrument)
-            if tick.instrument != requested_instrument:
-                _LOGGER.debug(
-                    "Skipped CSV tick row for different instrument",
-                    extra={
-                        **self._row_log_extra(row),
-                        "instrument": str(tick.instrument),
-                        "requested_instrument": str(requested_instrument),
-                        "data_kind": "tick",
-                    },
-                )
-                continue
-            if not self._is_in_range(tick.timestamp, start_at=start_at, end_at=end_at):
-                _LOGGER.debug(
-                    "Skipped CSV tick row outside requested time range",
-                    extra={
-                        **self._row_log_extra(row),
-                        "instrument": str(tick.instrument),
-                        "timestamp": tick.timestamp.isoformat(),
-                        "data_kind": "tick",
-                    },
-                )
-                continue
-            yielded_count += 1
-            _LOGGER.debug(
-                "Yielding CSV tick row",
-                extra={
-                    **self._row_log_extra(row),
-                    "instrument": str(tick.instrument),
-                    "timestamp": tick.timestamp.isoformat(),
-                    "data_kind": "tick",
-                    "yielded_count": yielded_count,
-                },
-            )
-            yield tick
+        for path in self.tick_paths:
+            for row in self._rows(
+                path,
+                instrument_column=self.tick_schema.instrument,
+                target=target,
+                prefix_separator=self.tick_schema.instrument_prefix_separator,
+            ):
+                tick = self._tick_from_row(row, requested_instrument)
+                if tick.instrument != requested_instrument:
+                    _LOGGER.debug(
+                        "Skipped CSV tick row for different instrument",
+                        extra={
+                            **self._row_log_extra(row),
+                            "instrument": str(tick.instrument),
+                            "requested_instrument": str(requested_instrument),
+                            "data_kind": "tick",
+                        },
+                    )
+                    continue
+                if not self._is_in_range(tick.timestamp, start_at=start_at, end_at=end_at):
+                    continue
+                yielded_count += 1
+                yield tick
         _LOGGER.info(
-            "Finished loading ticks from CSV file %s",
-            self.tick_path,
+            "Finished loading ticks from %d CSV file(s)",
+            len(self.tick_paths),
             extra={
-                "csv_path": str(self.tick_path),
+                "csv_path": self._paths_log(self.tick_paths),
                 "instrument": str(requested_instrument),
                 "data_kind": "tick",
                 "yielded_count": yielded_count,
@@ -214,8 +273,8 @@ class CSVDataSource(DataSource):
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Candle]:
-        """Yield candles from the configured candle CSV file."""
-        if self.candle_path is None:
+        """Yield candles from the configured candle CSV file(s)."""
+        if not self.candle_paths:
             _LOGGER.debug(
                 "CSV candle path is not configured",
                 extra={
@@ -227,72 +286,48 @@ class CSVDataSource(DataSource):
             return
         requested_instrument = CurrencyPair.of(instrument)
         _LOGGER.info(
-            "Loading candles from CSV file %s",
-            self.candle_path,
+            "Loading candles from %d CSV file(s)",
+            len(self.candle_paths),
             extra={
-                "csv_path": str(self.candle_path),
+                "csv_path": self._paths_log(self.candle_paths),
                 "instrument": str(requested_instrument),
                 "granularity": granularity,
                 "data_kind": "candle",
             },
         )
+        target = self._compact_symbol(requested_instrument)
         yielded_count = 0
-        for row in self._rows(self.candle_path):
-            candle = self._candle_from_row(row, requested_instrument, granularity)
-            if candle.instrument != requested_instrument:
-                _LOGGER.debug(
-                    "Skipped CSV candle row for different instrument",
-                    extra={
-                        **self._row_log_extra(row),
-                        "instrument": str(candle.instrument),
-                        "requested_instrument": str(requested_instrument),
-                        "granularity": str(candle.granularity),
-                        "data_kind": "candle",
-                    },
-                )
-                continue
-            if str(candle.granularity) != granularity:
-                _LOGGER.debug(
-                    "Skipped CSV candle row for different granularity",
-                    extra={
-                        **self._row_log_extra(row),
-                        "instrument": str(candle.instrument),
-                        "granularity": str(candle.granularity),
-                        "requested_granularity": granularity,
-                        "data_kind": "candle",
-                    },
-                )
-                continue
-            if not self._is_in_range(candle.timestamp, start_at=start_at, end_at=end_at):
-                _LOGGER.debug(
-                    "Skipped CSV candle row outside requested time range",
-                    extra={
-                        **self._row_log_extra(row),
-                        "instrument": str(candle.instrument),
-                        "timestamp": candle.timestamp.isoformat(),
-                        "granularity": str(candle.granularity),
-                        "data_kind": "candle",
-                    },
-                )
-                continue
-            yielded_count += 1
-            _LOGGER.debug(
-                "Yielding CSV candle row",
-                extra={
-                    **self._row_log_extra(row),
-                    "instrument": str(candle.instrument),
-                    "timestamp": candle.timestamp.isoformat(),
-                    "granularity": str(candle.granularity),
-                    "data_kind": "candle",
-                    "yielded_count": yielded_count,
-                },
-            )
-            yield candle
+        for path in self.candle_paths:
+            for row in self._rows(
+                path,
+                instrument_column=self.candle_schema.instrument,
+                target=target,
+                prefix_separator=self.candle_schema.instrument_prefix_separator,
+            ):
+                candle = self._candle_from_row(row, requested_instrument, granularity)
+                if candle.instrument != requested_instrument:
+                    _LOGGER.debug(
+                        "Skipped CSV candle row for different instrument",
+                        extra={
+                            **self._row_log_extra(row),
+                            "instrument": str(candle.instrument),
+                            "requested_instrument": str(requested_instrument),
+                            "granularity": str(candle.granularity),
+                            "data_kind": "candle",
+                        },
+                    )
+                    continue
+                if str(candle.granularity) != granularity:
+                    continue
+                if not self._is_in_range(candle.timestamp, start_at=start_at, end_at=end_at):
+                    continue
+                yielded_count += 1
+                yield candle
         _LOGGER.info(
-            "Finished loading candles from CSV file %s",
-            self.candle_path,
+            "Finished loading candles from %d CSV file(s)",
+            len(self.candle_paths),
             extra={
-                "csv_path": str(self.candle_path),
+                "csv_path": self._paths_log(self.candle_paths),
                 "instrument": str(requested_instrument),
                 "granularity": granularity,
                 "data_kind": "candle",
@@ -382,7 +417,21 @@ class CSVDataSource(DataSource):
         )
         return candle
 
-    def _rows(self, path: Path) -> Iterable[_CSVRow]:
+    def _rows(
+        self,
+        path: Path,
+        *,
+        instrument_column: str | None = None,
+        target: str | None = None,
+        prefix_separator: str | None = None,
+    ) -> Iterable[_CSVRow]:
+        """Yield rows from ``path``.
+
+        When ``instrument_column`` and ``target`` are given, each raw line's
+        instrument field is compared as text before the row is parsed, so rows
+        for other instruments are skipped without building a model. This keeps
+        reading one instrument from a large multi-instrument archive cheap.
+        """
         try:
             file = self._open_csv(path)
         except OSError as exc:
@@ -394,23 +443,34 @@ class CSVDataSource(DataSource):
             msg = f"failed to open CSV file: {path}"
             raise CSVDataSourceError(msg) from exc
         with file:
-            reader = csv.DictReader(file)
+            reader = csv.reader(file)
+            try:
+                fieldnames = next(reader)
+            except StopIteration:
+                return
             _LOGGER.debug(
                 "Opened CSV file %s",
                 path,
-                extra={
-                    "csv_path": str(path),
-                    "csv_columns": ",".join(reader.fieldnames or ()),
-                },
+                extra={"csv_path": str(path), "csv_columns": ",".join(fieldnames)},
+            )
+            filter_index = (
+                fieldnames.index(instrument_column)
+                if instrument_column is not None and instrument_column in fieldnames
+                else None
             )
             for row_number, values in enumerate(reader, start=2):
-                _LOGGER.debug(
-                    "Read CSV row",
-                    extra=self._row_log_extra(
-                        _CSVRow(path=path, number=row_number, values=values),
-                    ),
+                if filter_index is not None and target is not None and filter_index < len(values):
+                    raw_instrument = values[filter_index].strip()
+                    # Empty cells fall back to the requested instrument, so only
+                    # a non-empty mismatch is filtered out before parsing.
+                    compact = self._compact_ticker(raw_instrument, prefix_separator)
+                    if raw_instrument and compact != target:
+                        continue
+                yield _CSVRow(
+                    path=path,
+                    number=row_number,
+                    values=dict(zip(fieldnames, values, strict=False)),
                 )
-                yield _CSVRow(path=path, number=row_number, values=values)
 
     def _open_csv(self, path: Path) -> IO[str]:
         if path.suffix.lower() == ".gz":
@@ -498,6 +558,26 @@ class CSVDataSource(DataSource):
         if prefix_separator and prefix_separator in normalized:
             normalized = normalized.rsplit(prefix_separator, maxsplit=1)[-1]
         return CurrencyPair.of(normalized)
+
+    def _compact_ticker(self, raw_ticker: str, prefix_separator: str | None) -> str:
+        """Reduce a raw instrument field (e.g. ``C:EUR-USD``) to ``EURUSD``."""
+        value = raw_ticker.strip()
+        if prefix_separator and prefix_separator in value:
+            value = value.rsplit(prefix_separator, maxsplit=1)[-1]
+        return self._strip_separators(value)
+
+    @staticmethod
+    def _compact_symbol(instrument: CurrencyPair) -> str:
+        """Return the separator-free symbol (e.g. ``EURUSD``) for filtering."""
+        return f"{instrument.base}{instrument.quote}".upper()
+
+    @staticmethod
+    def _strip_separators(value: str) -> str:
+        return value.upper().replace("-", "").replace("_", "").replace("/", "").strip()
+
+    @staticmethod
+    def _paths_log(paths: tuple[Path, ...]) -> str:
+        return ",".join(str(path) for path in paths)
 
     def _metadata(
         self,

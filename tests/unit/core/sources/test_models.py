@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from core.models import Candle, CurrencyPair, Metadata, Money, Tick
+from core import Candle, CurrencyPair, Metadata, Money, Tick
 
 USD_JPY = CurrencyPair.of("USD_JPY")
 EUR_USD = CurrencyPair.of("EUR_USD")

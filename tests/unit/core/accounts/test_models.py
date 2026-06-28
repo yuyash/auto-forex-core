@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from core.models import Account, AccountId, Metadata
+from core import Account, AccountId, Metadata
 
 
 def test_account_id_normalizes_non_empty_identifier() -> None:

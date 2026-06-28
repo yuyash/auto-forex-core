@@ -3,15 +3,28 @@ from datetime import UTC, datetime
 
 import pytest
 
-from core import CORE_LOGGER_NAME
-from core.models import CurrencyPair, StrategyReference
-from core.tasks import BacktestTaskDefinition, ExecutableTask, TaskStateError, TaskStatus
+from core import CORE_LOGGER_NAME, CurrencyPair, ErrorCategory, ErrorCode
+from core.tasks import (
+    BacktestTaskDefinition,
+    ExecutableTask,
+    TaskFailure,
+    TaskStateError,
+    TaskStatus,
+)
+
+
+def _definition() -> BacktestTaskDefinition:
+    return BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=CurrencyPair.of("USD_JPY"),
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
 
 
 def test_executable_task_has_lifecycle_behavior() -> None:
     definition = BacktestTaskDefinition(
         name="Backtest USD_JPY",
-        strategy=StrategyReference.of("snowball"),
         instrument=CurrencyPair.of("USD_JPY"),
         start_at=datetime(2026, 1, 1, tzinfo=UTC),
         end_at=datetime(2026, 1, 2, tzinfo=UTC),
@@ -38,7 +51,6 @@ def test_executable_task_rejects_invalid_lifecycle_transition() -> None:
     task = ExecutableTask.from_definition(
         BacktestTaskDefinition(
             name="Backtest USD_JPY",
-            strategy=StrategyReference.of("snowball"),
             instrument=CurrencyPair.of("USD_JPY"),
             start_at=datetime(2026, 1, 1, tzinfo=UTC),
             end_at=datetime(2026, 1, 2, tzinfo=UTC),
@@ -54,7 +66,6 @@ def test_executable_task_emits_structured_lifecycle_logs(
 ) -> None:
     definition = BacktestTaskDefinition(
         name="Backtest USD_JPY",
-        strategy=StrategyReference.of("snowball"),
         instrument=CurrencyPair.of("USD_JPY"),
         start_at=datetime(2026, 1, 1, tzinfo=UTC),
         end_at=datetime(2026, 1, 2, tzinfo=UTC),
@@ -70,3 +81,55 @@ def test_executable_task_emits_structured_lifecycle_logs(
     assert record.__dict__["task_id"] == str(task.id)
     assert record.__dict__["task_definition_id"] == str(definition.id)
     assert record.__dict__["task_status"] == TaskStatus.RUNNING.value
+
+
+def test_executable_task_fail_with_message_builds_structured_failure() -> None:
+    running = ExecutableTask.from_definition(_definition()).start()
+
+    failed = running.fail("data source unavailable")
+
+    assert failed.status == TaskStatus.FAILED
+    assert isinstance(failed.failure, TaskFailure)
+    assert failed.failure.message == "data source unavailable"
+    assert failed.failure.code == ErrorCode.TASK_FAILED
+    assert failed.failure.category == ErrorCategory.TASK
+    # Back-compat string accessor.
+    assert failed.failure_reason == "data source unavailable"
+
+
+def test_executable_task_fail_with_exception_captures_traceback() -> None:
+    running = ExecutableTask.from_definition(_definition()).start()
+    try:
+        raise ValueError("bad tick")
+    except ValueError as exc:
+        failed = running.fail(exc)
+
+    assert failed.failure is not None
+    assert failed.failure.message == "bad tick"
+    assert failed.failure.cause_type == "ValueError"
+    assert "ValueError" in failed.failure.traceback
+    assert "bad tick" in failed.failure.traceback
+
+
+def test_executable_task_fail_accepts_prebuilt_failure() -> None:
+    running = ExecutableTask.from_definition(_definition()).start()
+    failure = TaskFailure.of(
+        "broker rejected order",
+        code=ErrorCode.ORDER_REJECTED,
+        category=ErrorCategory.BROKER,
+        where="BacktestRunner.run",
+    )
+
+    failed = running.fail(failure)
+
+    assert failed.failure == failure
+    assert failed.failure_reason == "broker rejected order"
+
+
+def test_executable_task_restart_clears_failure() -> None:
+    failed = ExecutableTask.from_definition(_definition()).start().fail("boom")
+
+    restarted = failed.restart()
+
+    assert restarted.failure is None
+    assert restarted.failure_reason == ""

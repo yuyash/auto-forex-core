@@ -17,6 +17,10 @@ class DomainModel(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    def dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Return a Python dict of the model (shorthand for ``model_dump``)."""
+        return self.model_dump(**kwargs)
+
     def evolve(self, **changes: Any) -> Self:
         """Return a validated copy with selected fields changed."""
         if changes:

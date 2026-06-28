@@ -20,7 +20,6 @@ from core import (
     StrategyDecisionReason,
     StrategyEvent,
     StrategyParameters,
-    StrategyReference,
     StrategyResult,
     TaskStatus,
     TaskType,
@@ -141,7 +140,6 @@ def test_forex_minute_aggs_data_source_generates_candles() -> None:
 def test_backtest_task_processes_forex_quote_ticks_end_to_end() -> None:
     definition = BacktestTaskDefinition(
         name="Backtest EUR_USD sample quotes",
-        strategy=StrategyReference.of("hold"),
         instrument=EUR_USD,
         parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         start_at=datetime(2023, 3, 28, tzinfo=UTC),
@@ -159,7 +157,6 @@ def test_backtest_task_processes_forex_quote_ticks_end_to_end() -> None:
 def test_trading_task_processes_forex_quote_ticks_end_to_end() -> None:
     definition = TradingTaskDefinition(
         name="Trading EUR_USD sample quotes",
-        strategy=StrategyReference.of("hold"),
         instrument=EUR_USD,
         account=Account.of("test-account"),
         dry_run=True,
@@ -177,7 +174,6 @@ def test_trading_task_processes_forex_quote_ticks_end_to_end() -> None:
 def test_backtest_task_processes_gzip_forex_quote_ticks_end_to_end() -> None:
     definition = BacktestTaskDefinition(
         name="Backtest AED_AUD compressed sample quotes",
-        strategy=StrategyReference.of("hold"),
         instrument=AED_AUD,
         parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         start_at=datetime(2026, 6, 26, tzinfo=UTC),
@@ -199,7 +195,6 @@ def test_backtest_task_processes_gzip_forex_quote_ticks_end_to_end() -> None:
 def test_trading_task_processes_gzip_forex_quote_ticks_end_to_end() -> None:
     definition = TradingTaskDefinition(
         name="Trading AED_AUD compressed sample quotes",
-        strategy=StrategyReference.of("hold"),
         instrument=AED_AUD,
         account=Account.of("test-account"),
         dry_run=True,
@@ -221,7 +216,6 @@ def test_trading_task_processes_gzip_forex_quote_ticks_end_to_end() -> None:
 def test_backtest_task_processes_forex_minute_aggs_candles_end_to_end() -> None:
     definition = BacktestTaskDefinition(
         name="Backtest EUR_USD sample minute aggs",
-        strategy=StrategyReference.of("hold"),
         instrument=EUR_USD,
         parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         start_at=datetime(2023, 3, 28, tzinfo=UTC),
@@ -242,7 +236,6 @@ def test_backtest_task_processes_forex_minute_aggs_candles_end_to_end() -> None:
 def test_trading_task_processes_gzip_forex_minute_aggs_candles_end_to_end() -> None:
     definition = TradingTaskDefinition(
         name="Trading AED_AUD compressed minute aggs",
-        strategy=StrategyReference.of("hold"),
         instrument=AED_AUD,
         account=Account.of("test-account"),
         dry_run=True,
@@ -270,7 +263,7 @@ def _run_ticks_through_task(
 ) -> tuple[ExecutableTask, tuple[StrategyEvent, ...]]:
     task = ExecutableTask.from_definition(definition).start()
     strategy = HoldStrategy(
-        name=definition.strategy.name,
+        name="hold",
         instrument=definition.instrument,
         parameters=definition.parameters,
     )
@@ -300,7 +293,7 @@ def _run_candles_through_task(
 ) -> tuple[ExecutableTask, tuple[StrategyEvent, ...]]:
     task = ExecutableTask.from_definition(definition).start()
     strategy = HoldStrategy(
-        name=definition.strategy.name,
+        name="hold",
         instrument=definition.instrument,
         parameters=definition.parameters,
     )

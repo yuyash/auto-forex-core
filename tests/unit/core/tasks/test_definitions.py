@@ -4,17 +4,14 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from core.models import (
+from core import (
     Account,
     CurrencyPair,
     Money,
     StrategyParameters,
-    StrategyReference,
-    TickGranularity,
 )
 from core.tasks import (
     BacktestTaskDefinition,
-    DataSourceType,
     TaskType,
     TradingTaskDefinition,
 )
@@ -24,7 +21,6 @@ def test_backtest_task_definition_models_required_period() -> None:
     definition = BacktestTaskDefinition.model_validate(
         {
             "name": "Backtest USD_JPY",
-            "strategy": "snowball",
             "instrument": CurrencyPair.of("USD_JPY"),
             "parameters": {"risk_percent": Decimal("1.5")},
             "start_at": datetime(2026, 1, 1, tzinfo=UTC),
@@ -33,33 +29,14 @@ def test_backtest_task_definition_models_required_period() -> None:
     )
 
     assert definition.task_type == TaskType.BACKTEST
-    assert definition.data_source_type == DataSourceType.CUSTOM
-    assert definition.strategy == StrategyReference.of("snowball")
     assert definition.initial_balance == Money.of("10000", "USD")
     assert definition.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
-    assert definition.tick_granularity == TickGranularity.TICK
-
-
-def test_backtest_task_definition_models_data_source_type() -> None:
-    definition = BacktestTaskDefinition.model_validate(
-        {
-            "name": "Backtest USD_JPY",
-            "strategy": "snowball",
-            "instrument": CurrencyPair.of("USD_JPY"),
-            "data_source_type": "csv",
-            "start_at": datetime(2026, 1, 1, tzinfo=UTC),
-            "end_at": datetime(2026, 1, 2, tzinfo=UTC),
-        }
-    )
-
-    assert definition.data_source_type == DataSourceType.CSV
 
 
 def test_backtest_task_definition_rejects_invalid_period() -> None:
     with pytest.raises(ValidationError, match="start_at must be earlier"):
         BacktestTaskDefinition(
             name="Invalid",
-            strategy=StrategyReference.of("snowball"),
             instrument=CurrencyPair.of("USD_JPY"),
             start_at=datetime(2026, 1, 2, tzinfo=UTC),
             end_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -69,7 +46,6 @@ def test_backtest_task_definition_rejects_invalid_period() -> None:
 def test_trading_task_definition_defaults_to_dry_run() -> None:
     definition = TradingTaskDefinition(
         name="Live USD_JPY",
-        strategy=StrategyReference.of("snowball"),
         instrument=CurrencyPair.of("USD_JPY"),
         account=Account.of("001"),
     )
@@ -77,14 +53,12 @@ def test_trading_task_definition_defaults_to_dry_run() -> None:
     assert definition.task_type == TaskType.TRADING
     assert definition.account == Account.of("001")
     assert definition.dry_run is True
-    assert definition.tick_granularity == TickGranularity.TICK
 
 
 def test_backtest_task_definition_rejects_non_positive_initial_balance() -> None:
     with pytest.raises(ValidationError, match="money amount must be greater than 0"):
         BacktestTaskDefinition(
             name="Invalid balance",
-            strategy=StrategyReference.of("snowball"),
             instrument=CurrencyPair.of("USD_JPY"),
             start_at=datetime(2026, 1, 1, tzinfo=UTC),
             end_at=datetime(2026, 1, 2, tzinfo=UTC),

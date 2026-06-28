@@ -10,9 +10,10 @@ from logging import Logger
 from pydantic import Field, model_validator
 
 from core.logging import get_logger
-from core.models import Candle, CurrencyPair, Tick
+from core.models import CurrencyPair
 from core.models.base import DomainModel
-from core.ports import DataSource
+from core.sources.base import DataSource
+from core.sources.models import Candle, Tick, TickGranularity
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -91,14 +92,18 @@ class SpreadFilteredDataSource(DataSource):
             max_spread_pips=self._optional_decimal(max_spread_pips),
         )
 
-    def ticks(
+    def _raw_ticks(
         self,
         *,
         instrument: CurrencyPair,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Tick]:
-        """Yield ticks from the wrapped source after applying the spread filter."""
+        """Yield raw ticks from the wrapped source after applying the spread filter.
+
+        Sampling granularity is applied by the base ``ticks`` method on top of
+        these filtered ticks, so the wrapped source is read at full resolution.
+        """
         requested_instrument = CurrencyPair.of(instrument)
         _LOGGER.info(
             "Loading spread-filtered ticks",
@@ -112,6 +117,7 @@ class SpreadFilteredDataSource(DataSource):
         skipped_count = 0
         for tick in self.source.ticks(
             instrument=requested_instrument,
+            granularity=TickGranularity.TICK,
             start_at=start_at,
             end_at=end_at,
         ):

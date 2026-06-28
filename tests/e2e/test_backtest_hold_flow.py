@@ -15,7 +15,6 @@ from core import (
     StrategyDecisionReason,
     StrategyEvent,
     StrategyParameters,
-    StrategyReference,
     StrategyResult,
     TaskStatus,
     TaskType,
@@ -56,7 +55,6 @@ def test_backtest_task_processes_csv_ticks_end_to_end(tmp_path: Path) -> None:
     instrument = CurrencyPair.of("USD_JPY")
     definition = BacktestTaskDefinition(
         name="Backtest USD_JPY",
-        strategy=StrategyReference.of("hold"),
         instrument=instrument,
         parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         start_at=datetime(2026, 1, 1, tzinfo=UTC),

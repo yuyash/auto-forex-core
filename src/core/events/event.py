@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from decimal import Decimal
 from logging import Logger
 from typing import Any, Self
@@ -11,6 +10,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from core.clock import now
 from core.events.errors import (
     ErrorCategory,
     ErrorCode,
@@ -40,7 +40,7 @@ class Event(DomainModel):
     id: UUID = Field(default_factory=new_uuid)
     type: EventType
     severity: EventSeverity = EventSeverity.INFO
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: AwareDatetime = Field(default_factory=now)
     source: EventSource = EventSource.CORE
     task_id: UUID | None = None
     message_key: EventMessageKey = EventMessageKey.NONE

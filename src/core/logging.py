@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import TextIO
 
 CORE_LOGGER_NAME = "core"
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+
+
+class LogLevel(StrEnum):
+    """Logging levels accepted by :func:`configure_logging`."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+    @property
+    def number(self) -> int:
+        """Return the numeric logging level for this name."""
+        return logging.getLevelNamesMapping()[self.value]
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
@@ -20,7 +36,7 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 def configure_logging(
     *,
-    level: int | str = logging.INFO,
+    level: LogLevel = LogLevel.INFO,
     stream: TextIO | None = None,
     handler: logging.Handler | None = None,
     format: str = DEFAULT_LOG_FORMAT,
@@ -34,7 +50,7 @@ def configure_logging(
     standard Python logging tree themselves.
     """
     logger = get_logger()
-    logger.setLevel(level)
+    logger.setLevel(LogLevel(level).number)
     logger.propagate = propagate
 
     if replace_handlers:

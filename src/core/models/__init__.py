@@ -1,57 +1,22 @@
-"""Domain models exported by the Core package."""
+"""Shared, feature-agnostic domain primitives used across Core.
 
-from core.models.account import Account, AccountId
+Feature-specific models live with their feature package:
+``core.brokers`` (orders/positions), ``core.strategies`` (strategy params and
+state), ``core.sources`` (ticks/candles), and ``core.accounts`` (accounts).
+"""
+
 from core.models.base import DomainModel
-from core.models.broker import (
-    BrokerOrderId,
-    BrokerPositionId,
-    OrderRequest,
-    OrderRequestId,
-    OrderResult,
-    OrderResultMessageKey,
-    OrderResultReason,
-    OrderResultReasonCode,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    Position,
-    PositionSide,
-    message_key_for_order_result_reason,
-)
 from core.models.identifiers import new_uuid
-from core.models.market import Candle, CandleGranularity, Tick, TickGranularity
+from core.models.mapping import MappingValueObject
 from core.models.metadata import Metadata
 from core.models.money import Currency, CurrencyPair, Money
-from core.models.strategy import StrategyParameters, StrategyReference, StrategyState
 
 __all__ = [
-    "Account",
-    "AccountId",
-    "BrokerOrderId",
-    "BrokerPositionId",
-    "Candle",
-    "CandleGranularity",
     "Currency",
     "CurrencyPair",
     "DomainModel",
+    "MappingValueObject",
     "Metadata",
     "Money",
-    "OrderRequest",
-    "OrderRequestId",
-    "OrderResult",
-    "OrderResultMessageKey",
-    "OrderResultReason",
-    "OrderResultReasonCode",
-    "OrderSide",
-    "OrderStatus",
-    "OrderType",
-    "Position",
-    "PositionSide",
-    "StrategyParameters",
-    "StrategyReference",
-    "StrategyState",
-    "Tick",
-    "TickGranularity",
-    "message_key_for_order_result_reason",
     "new_uuid",
 ]

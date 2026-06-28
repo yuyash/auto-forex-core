@@ -8,7 +8,6 @@ from core import (
     BacktestTaskDefinition,
     CurrencyPair,
     ExecutableTask,
-    StrategyReference,
     TaskStatus,
 )
 
@@ -16,7 +15,6 @@ from core import (
 def test_task_lifecycle_emits_structured_logs(caplog: pytest.LogCaptureFixture) -> None:
     definition = BacktestTaskDefinition(
         name="Backtest USD_JPY",
-        strategy=StrategyReference.of("snowball"),
         instrument=CurrencyPair.of("USD_JPY"),
         start_at=datetime(2026, 1, 1, tzinfo=UTC),
         end_at=datetime(2026, 1, 2, tzinfo=UTC),

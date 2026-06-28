@@ -36,7 +36,7 @@ class MemoryDataSource(DataSource):
     def __init__(self, ticks: Iterable[Tick]) -> None:
         self._ticks = tuple(ticks)
 
-    def ticks(
+    def _raw_ticks(
         self,
         *,
         instrument: CurrencyPair,

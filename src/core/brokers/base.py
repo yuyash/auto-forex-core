@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from decimal import Decimal
 
-from core.models.broker import OrderRequest, OrderResult, Position
+from core.brokers.models import OrderRequest, OrderResult, Position
 from core.models.money import CurrencyPair
 
 

@@ -13,6 +13,13 @@ from core.logging import get_logger
 _LOGGER: Logger = get_logger(__name__)
 
 
+class TaskType(StrEnum):
+    """Executable task types managed by AutoForex."""
+
+    BACKTEST = "backtest"
+    TRADING = "trading"
+
+
 class TaskStatus(StrEnum):
     """Lifecycle states common to backtest and live trading tasks."""
 
@@ -220,41 +227,27 @@ class TaskStateMachine:
             msg = f"cannot {normalized.value} task {task_id} while status is {status.value}"
             raise TaskStateError(msg) from exc
 
+    def assert_allowed(
+        self,
+        *,
+        task_id: UUID,
+        status: TaskStatus,
+        action: TaskAction | str,
+    ) -> None:
+        """Raise TaskStateError when a transition is not allowed."""
+        _LOGGER.debug(
+            "Asserting task transition is allowed",
+            extra={
+                "task_id": str(task_id),
+                "task_status": status.value,
+                "task_action": normalize_task_action(action).value,
+            },
+        )
+        self.transition(task_id=task_id, status=status, action=action)
+
 
 DEFAULT_TASK_STATE_MACHINE = TaskStateMachine.default()
 
 ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskAction]] = {
     status: DEFAULT_TASK_STATE_MACHINE.allowed_actions(status) for status in TaskStatus
 }
-
-
-def can_transition(status: TaskStatus, action: TaskAction | str) -> bool:
-    """Return whether a lifecycle action is valid for the status."""
-    allowed = DEFAULT_TASK_STATE_MACHINE.can(status, action)
-    _LOGGER.debug(
-        "Checked default task transition permission",
-        extra={
-            "task_status": status.value,
-            "task_action": normalize_task_action(action).value,
-            "transition_allowed": allowed,
-        },
-    )
-    return allowed
-
-
-def assert_transition_allowed(
-    *,
-    task_id: UUID,
-    status: TaskStatus,
-    action: TaskAction | str,
-) -> None:
-    """Raise TaskStateError when a transition is not allowed."""
-    _LOGGER.debug(
-        "Asserting task transition is allowed",
-        extra={
-            "task_id": str(task_id),
-            "task_status": status.value,
-            "task_action": normalize_task_action(action).value,
-        },
-    )
-    DEFAULT_TASK_STATE_MACHINE.transition(task_id=task_id, status=status, action=action)

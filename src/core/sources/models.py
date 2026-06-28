@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import StrEnum
 from logging import Logger
 from typing import Any
@@ -17,7 +18,11 @@ _LOGGER: Logger = get_logger(__name__)
 
 
 class TickGranularity(StrEnum):
-    """Tick replay or sampling granularity."""
+    """Tick replay or sampling granularity.
+
+    ``TICK`` means every tick (no downsampling). The other members describe a
+    fixed sampling interval; :attr:`interval` returns it as a ``timedelta``.
+    """
 
     TICK = "tick"
     SECOND_1 = "1s"
@@ -29,6 +34,25 @@ class TickGranularity(StrEnum):
     MINUTE_15 = "15m"
     MINUTE_30 = "30m"
     HOUR_1 = "1h"
+
+    @property
+    def interval(self) -> timedelta | None:
+        """Return the sampling interval, or ``None`` for per-tick granularity."""
+        return _TICK_GRANULARITY_INTERVALS[self]
+
+
+_TICK_GRANULARITY_INTERVALS: dict[TickGranularity, timedelta | None] = {
+    TickGranularity.TICK: None,
+    TickGranularity.SECOND_1: timedelta(seconds=1),
+    TickGranularity.SECOND_10: timedelta(seconds=10),
+    TickGranularity.SECOND_15: timedelta(seconds=15),
+    TickGranularity.SECOND_30: timedelta(seconds=30),
+    TickGranularity.MINUTE_1: timedelta(minutes=1),
+    TickGranularity.MINUTE_5: timedelta(minutes=5),
+    TickGranularity.MINUTE_15: timedelta(minutes=15),
+    TickGranularity.MINUTE_30: timedelta(minutes=30),
+    TickGranularity.HOUR_1: timedelta(hours=1),
+}
 
 
 class CandleGranularity(StrEnum):
