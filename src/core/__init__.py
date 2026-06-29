@@ -68,7 +68,6 @@ from core.strategies import (
     Strategy,
     StrategyContext,
     StrategyParameters,
-    StrategyReference,
     StrategyResult,
     StrategyState,
 )
@@ -146,7 +145,6 @@ __all__ = [
     "StrategyDecisionReason",
     "StrategyEvent",
     "StrategyParameters",
-    "StrategyReference",
     "StrategyResult",
     "StrategyState",
     "TaskAction",

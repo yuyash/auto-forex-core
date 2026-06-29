@@ -122,7 +122,6 @@ def test_core_ports_work_together_for_strategy_and_broker_flow() -> None:
     data_source = MemoryDataSource([tick])
     strategy = HoldStrategy(
         name="snowball",
-        instrument=USD_JPY,
         parameters={"risk_percent": Decimal("1.5")},
     )
     context = StrategyContext(

@@ -62,7 +62,7 @@ def test_backtest_task_processes_csv_ticks_end_to_end(tmp_path: Path) -> None:
     )
     task = ExecutableTask.from_definition(definition).start()
     source = CSVDataSource(tick_path=tick_path)
-    strategy = HoldStrategy(name="hold", instrument=instrument, parameters=definition.parameters)
+    strategy = HoldStrategy(name="hold", parameters=definition.parameters)
     context = StrategyContext(
         task_id=task.id,
         task_type=TaskType.BACKTEST,

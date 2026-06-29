@@ -3,26 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from core import StrategyParameters, StrategyReference, StrategyState
-
-
-def test_strategy_reference_models_strategy_identity() -> None:
-    reference = StrategyReference.of(
-        {
-            "name": " snowball ",
-            "version": " 1.0.0 ",
-            "package": " auto_forex_snowball ",
-        }
-    )
-
-    assert reference.name == "snowball"
-    assert reference.version == "1.0.0"
-    assert reference.package == "auto_forex_snowball"
-    assert str(reference) == "auto_forex_snowball:snowball@1.0.0"
-
-
-def test_strategy_reference_can_be_created_from_name() -> None:
-    assert StrategyReference.of("hold") == StrategyReference(name="hold")
+from core import StrategyParameters, StrategyState
 
 
 def test_strategy_parameters_and_state_are_modeled_value_objects() -> None:

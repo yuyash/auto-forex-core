@@ -264,7 +264,6 @@ def _run_ticks_through_task(
     task = ExecutableTask.from_definition(definition).start()
     strategy = HoldStrategy(
         name="hold",
-        instrument=definition.instrument,
         parameters=definition.parameters,
     )
     context = StrategyContext(
@@ -294,7 +293,6 @@ def _run_candles_through_task(
     task = ExecutableTask.from_definition(definition).start()
     strategy = HoldStrategy(
         name="hold",
-        instrument=definition.instrument,
         parameters=definition.parameters,
     )
     context = StrategyContext(

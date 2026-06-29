@@ -25,7 +25,6 @@ class HoldStrategy(Strategy):
 def test_strategy_normalizes_parameters_and_context() -> None:
     strategy = HoldStrategy(
         name="hold",
-        instrument="USD_JPY",
         parameters={"risk_percent": Decimal("1.5")},
     )
     context = StrategyContext(
@@ -42,9 +41,18 @@ def test_strategy_normalizes_parameters_and_context() -> None:
     )
 
     result = strategy.on_tick(tick, context)
+    log_extra = strategy._log_extra(context=context)
 
     assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
-    assert strategy.pip_size == Decimal("0.01")
     assert context.pip_size == Decimal("0.01")
     assert result.state == StrategyState.of(seen_ticks=1)
     assert result.events[0].task_id == context.task_id
+    assert log_extra.strategy_name == "hold"
+    assert dict(log_extra) == {
+        "task_id": str(context.task_id),
+        "task_type": TaskType.BACKTEST.value,
+        "strategy_name": "hold",
+        "strategy_class": "HoldStrategy",
+        "instrument": "USD_JPY",
+        "parameter_count": 1,
+    }

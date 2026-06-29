@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, fields
 from decimal import Decimal
 from logging import Logger
 from typing import Any
@@ -21,6 +22,30 @@ from core.strategies.models import StrategyParameters, StrategyState
 from core.tasks.state import TaskType
 
 _LOGGER: Logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class StrategyLogContext(Mapping[str, str | int]):
+    """Structured logging context for strategy lifecycle callbacks."""
+
+    task_id: str
+    task_type: str
+    strategy_name: str
+    strategy_class: str
+    instrument: str
+    parameter_count: int
+
+    def __getitem__(self, key: str) -> str | int:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def __iter__(self) -> Iterator[str]:
+        return (field.name for field in fields(self))
+
+    def __len__(self) -> int:
+        return len(fields(self))
 
 
 class StrategyContext(DomainModel):
@@ -51,7 +76,6 @@ class Strategy(ABC):
         self,
         *,
         name: str,
-        instrument: CurrencyPair | str,
         parameters: StrategyParameters | Mapping[str, Any] | None = None,
     ) -> None:
         _LOGGER.debug(
@@ -59,30 +83,21 @@ class Strategy(ABC):
             name,
             extra={
                 "strategy_name": name,
-                "instrument": str(instrument),
                 "strategy_class": self.__class__.__name__,
             },
         )
         self.name = name
-        self.instrument = CurrencyPair.model_validate(instrument)
         self.parameters = self.normalize_parameters(parameters or {})
         self.validate_parameters(self.parameters)
         _LOGGER.info(
-            "Initialized strategy %s for %s",
+            "Initialized strategy %s",
             self.name,
-            self.instrument,
             extra={
                 "strategy_name": self.name,
-                "instrument": str(self.instrument),
                 "strategy_class": self.__class__.__name__,
                 "parameter_count": len(self.parameters.values),
             },
         )
-
-    @property
-    def pip_size(self) -> Decimal:
-        """Return the instrument-derived pip size."""
-        return self.instrument.pip_size
 
     @classmethod
     def default_parameters(cls) -> StrategyParameters:
@@ -154,12 +169,12 @@ class Strategy(ABC):
         )
         return StrategyResult()
 
-    def _log_extra(self, *, context: StrategyContext) -> dict[str, str | int]:
-        return {
-            "task_id": str(context.task_id),
-            "task_type": context.task_type.value,
-            "strategy_name": self.name,
-            "strategy_class": self.__class__.__name__,
-            "instrument": str(self.instrument),
-            "parameter_count": len(self.parameters.values),
-        }
+    def _log_extra(self, *, context: StrategyContext) -> StrategyLogContext:
+        return StrategyLogContext(
+            task_id=str(context.task_id),
+            task_type=context.task_type.value,
+            strategy_name=self.name,
+            strategy_class=self.__class__.__name__,
+            instrument=str(context.instrument),
+            parameter_count=len(self.parameters.values),
+        )
