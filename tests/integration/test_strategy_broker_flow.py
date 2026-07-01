@@ -9,9 +9,7 @@ from core import (
     DataSource,
     Metadata,
     Money,
-    OrderRequest,
-    OrderRequestId,
-    OrderResult,
+    Order,
     OrderSide,
     OrderStatus,
     Position,
@@ -69,42 +67,45 @@ class HoldStrategy(Strategy):
 
 class MemoryBroker(Broker):
     def __init__(self) -> None:
-        self.orders: list[OrderRequest] = []
+        self.orders: list[Order] = []
 
-    def place_order(self, request: OrderRequest) -> OrderResult:
-        self.orders.append(request)
-        return OrderResult(
+    def place_order(self, order: Order) -> Order:
+        self.orders.append(order)
+        return order.evolve(
             status=OrderStatus.FILLED,
             broker_order_id=BrokerOrderId.of("order-1"),
-            instrument=request.instrument,
-            side=request.side,
-            requested_units=request.units,
-            filled_units=request.units,
-            average_fill_price=request.price,
+            filled_units=order.units,
+            average_fill_price=order.price,
         )
 
     def close_position(
         self,
         *,
         position: Position,
+        side: PositionSide,
         units: Decimal | None = None,
-    ) -> OrderResult:
-        return OrderResult(
+    ) -> Order:
+        state = position.require_side(side)
+        amount = units or state.units
+        return Order(
             status=OrderStatus.FILLED,
             broker_order_id=BrokerOrderId.of("close-order-1"),
             instrument=position.instrument,
-            side=OrderSide.SELL if position.side == PositionSide.LONG else OrderSide.BUY,
-            requested_units=units or position.units,
-            filled_units=units or position.units,
-            average_fill_price=position.average_entry_price,
+            side=OrderSide.SELL if side == PositionSide.LONG else OrderSide.BUY,
+            units=amount,
+            filled_units=amount,
+            average_fill_price=state.average_entry_price,
         )
 
     def positions(self, *, instrument: CurrencyPair | None = None) -> Sequence[Position]:
-        position = Position(
-            instrument=USD_JPY,
-            side=PositionSide.LONG,
-            units=Decimal("1000"),
-            average_entry_price=Money.of("150.10", "JPY"),
+        position = Position.model_validate(
+            {
+                "instrument": USD_JPY,
+                "long": {
+                    "units": Decimal("1000"),
+                    "average_entry_price": Money.of("150.10", "JPY"),
+                },
+            }
         )
         if instrument is not None and instrument != position.instrument:
             return ()
@@ -134,9 +135,8 @@ def test_core_ports_work_together_for_strategy_and_broker_flow() -> None:
 
     loaded_ticks = tuple(data_source.ticks(instrument=USD_JPY))
     result = strategy.on_tick(loaded_ticks[0], context)
-    order_result = broker.place_order(
-        OrderRequest(
-            request_id=OrderRequestId.new(),
+    placed_order = broker.place_order(
+        Order(
             instrument=USD_JPY,
             side=OrderSide.BUY,
             units=Decimal("1000"),
@@ -148,5 +148,5 @@ def test_core_ports_work_together_for_strategy_and_broker_flow() -> None:
     assert result.events[0].task_id == task_id
     assert result.events[0].reason.code == StrategyDecisionCode.HOLD
     assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
-    assert order_result.status == OrderStatus.FILLED
+    assert placed_order.status == OrderStatus.FILLED
     assert broker.orders[0].metadata == Metadata.of(event_id="event-1")

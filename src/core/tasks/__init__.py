@@ -17,7 +17,6 @@ from core.tasks.state import (
     TaskStateMachine,
     TaskStatus,
     TaskTransition,
-    normalize_task_action,
 )
 
 __all__ = [
@@ -35,5 +34,4 @@ __all__ = [
     "TaskTransition",
     "TaskType",
     "TradingTaskDefinition",
-    "normalize_task_action",
 ]

@@ -122,6 +122,11 @@ class ErrorCode(StrEnum):
     PROTOCOL_ERROR = "protocol_error"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
 
+    @classmethod
+    def for_event_type(cls, event_type: EventType) -> ErrorCode:
+        """Return the default error code for an event type."""
+        return ERROR_CODE_BY_EVENT_TYPE.get(event_type, cls.UNKNOWN)
+
 
 class ErrorDetails(MappingValueObject):
     """Read-only structured details attached to an error."""
@@ -133,11 +138,6 @@ ERROR_CODE_BY_EVENT_TYPE: dict[EventType, ErrorCode] = {
     EventType.RETRYABLE_ERROR_OCCURRED: ErrorCode.RETRYABLE_ERROR_OCCURRED,
     EventType.FATAL_ERROR_OCCURRED: ErrorCode.FATAL_ERROR_OCCURRED,
 }
-
-
-def error_code_for_event_type(event_type: EventType) -> ErrorCode:
-    """Return the default error code for an event type."""
-    return ERROR_CODE_BY_EVENT_TYPE.get(event_type, ErrorCode.UNKNOWN)
 
 
 class EventError(DomainModel):

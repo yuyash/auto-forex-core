@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
+from enum import StrEnum
 from logging import Logger
 from typing import Any, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.metadata import Metadata
+from core.models.money import Currency, Money
 
 _LOGGER: Logger = get_logger(__name__)
+
+
+class AccountProvider(StrEnum):
+    """Known account providers."""
+
+    OANDA = "oanda"
 
 
 class AccountId(DomainModel):
@@ -57,7 +66,7 @@ class Account(DomainModel):
     """Broker-neutral account reference used by trading tasks."""
 
     id: AccountId
-    provider: str | None = Field(default=None, min_length=1)
+    provider: AccountProvider | None = None
     alias: str | None = Field(default=None, min_length=1)
     metadata: Metadata = Field(default_factory=Metadata)
 
@@ -88,12 +97,61 @@ class Account(DomainModel):
             self.id,
             extra={
                 "account_id": str(self.id),
-                "account_provider": self.provider or "",
+                "account_provider": self.provider.value if self.provider else "",
                 "account_alias": self.alias or "",
             },
         )
         return self
 
     def __str__(self) -> str:
-        prefix = f"{self.provider}:" if self.provider else ""
+        prefix = f"{self.provider.value}:" if self.provider else ""
         return f"{prefix}{self.id}"
+
+
+class AccountSummary(DomainModel):
+    """Broker-neutral account balance and margin summary."""
+
+    account_id: AccountId
+    currency: Currency
+    alias: str | None = Field(default=None, min_length=1)
+    balance: Money | None = None
+    nav: Money | None = None
+    margin_used: Money | None = None
+    margin_available: Money | None = None
+    margin_rate: Decimal | None = Field(default=None, ge=0)
+    open_trade_count: int | None = Field(default=None, ge=0)
+    open_position_count: int | None = Field(default=None, ge=0)
+    pending_order_count: int | None = Field(default=None, ge=0)
+    last_transaction_id: str | None = Field(default=None, min_length=1)
+    created_at: AwareDatetime | None = None
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        normalized = dict(data)
+        if normalized.get("currency") is not None:
+            normalized["currency"] = Currency.of(normalized["currency"])
+        currency = normalized.get("currency")
+        if currency is not None:
+            for field_name in ("balance", "nav", "margin_used", "margin_available"):
+                if normalized.get(field_name) is not None:
+                    normalized[field_name] = cls._money_with_currency(
+                        normalized[field_name],
+                        currency,
+                    )
+        for key in ("alias", "last_transaction_id"):
+            if isinstance(normalized.get(key), str):
+                normalized[key] = normalized[key].strip()
+        return normalized
+
+    @staticmethod
+    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
+        if isinstance(value, Money):
+            return value.require_currency(currency)
+        if isinstance(value, Mapping):
+            return Money.model_validate(value).require_currency(currency)
+        return Money.of(value, currency)

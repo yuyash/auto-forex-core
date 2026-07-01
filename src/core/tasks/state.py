@@ -45,14 +45,14 @@ class TaskAction(StrEnum):
     COMPLETE = "complete"
     FAIL = "fail"
 
+    @classmethod
+    def of(cls, action: TaskAction | str) -> TaskAction:
+        """Return a TaskAction from enum or string input."""
+        return action if isinstance(action, cls) else cls(action)
+
 
 class TaskStateError(ValueError):
     """Raised when a task lifecycle transition is not allowed."""
-
-
-def normalize_task_action(action: TaskAction | str) -> TaskAction:
-    """Return a TaskAction from enum or string input."""
-    return action if isinstance(action, TaskAction) else TaskAction(action)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +152,7 @@ class TaskStateMachine:
 
     def can(self, status: TaskStatus, action: TaskAction | str) -> bool:
         """Return whether the action can be applied to the status."""
-        normalized = normalize_task_action(action)
+        normalized = TaskAction.of(action)
         allowed = normalized in self.allowed_actions(status)
         _LOGGER.debug(
             "Checked task transition permission",
@@ -166,7 +166,7 @@ class TaskStateMachine:
 
     def next_status(self, status: TaskStatus, action: TaskAction | str) -> TaskStatus:
         """Return the status reached by applying an action."""
-        normalized = normalize_task_action(action)
+        normalized = TaskAction.of(action)
         try:
             target = self._transitions[status][normalized]
             _LOGGER.debug(
@@ -199,7 +199,7 @@ class TaskStateMachine:
         action: TaskAction | str,
     ) -> TaskStatus:
         """Return the next status or raise TaskStateError with task context."""
-        normalized = normalize_task_action(action)
+        normalized = TaskAction.of(action)
         try:
             target = self._transitions[status][normalized]
             _LOGGER.debug(
@@ -240,7 +240,7 @@ class TaskStateMachine:
             extra={
                 "task_id": str(task_id),
                 "task_status": status.value,
-                "task_action": normalize_task_action(action).value,
+                "task_action": TaskAction.of(action).value,
             },
         )
         self.transition(task_id=task_id, status=status, action=action)

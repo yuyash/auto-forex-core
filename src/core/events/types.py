@@ -26,6 +26,16 @@ class EventType(StrEnum):
     RETRYABLE_ERROR_OCCURRED = "retryable_error_occurred"
     FATAL_ERROR_OCCURRED = "fatal_error_occurred"
 
+    @property
+    def metadata(self) -> EventTypeMetadata:
+        """Return default handling metadata for this event type."""
+        return EVENT_TYPE_METADATA.get(self, EventTypeMetadata(EventSeverity.INFO))
+
+    @property
+    def message_key(self) -> EventMessageKey:
+        """Return the default i18n message key for this event type."""
+        return MESSAGE_KEY_BY_EVENT_TYPE.get(self, EventMessageKey.NONE)
+
 
 class EventSeverity(StrEnum):
     """Operational severity for emitted events."""
@@ -112,13 +122,3 @@ MESSAGE_KEY_BY_EVENT_TYPE: dict[EventType, EventMessageKey] = {
     EventType.RETRYABLE_ERROR_OCCURRED: EventMessageKey.RETRYABLE_ERROR_OCCURRED,
     EventType.FATAL_ERROR_OCCURRED: EventMessageKey.FATAL_ERROR_OCCURRED,
 }
-
-
-def metadata_for_event_type(event_type: EventType) -> EventTypeMetadata:
-    """Return default handling metadata for an event type."""
-    return EVENT_TYPE_METADATA.get(event_type, EventTypeMetadata(EventSeverity.INFO))
-
-
-def message_key_for_event_type(event_type: EventType) -> EventMessageKey:
-    """Return the default i18n message key for an event type."""
-    return MESSAGE_KEY_BY_EVENT_TYPE.get(event_type, EventMessageKey.NONE)

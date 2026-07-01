@@ -2,23 +2,26 @@
 
 from importlib.metadata import version
 
-from core.accounts import Account, AccountId
+from core.accounts import Account, AccountId, AccountManager, AccountProvider, AccountSummary
 from core.brokers import (
     Broker,
     BrokerOrderId,
     BrokerPositionId,
-    OrderRequest,
-    OrderRequestId,
-    OrderResult,
-    OrderResultMessageKey,
-    OrderResultReason,
-    OrderResultReasonCode,
+    BrokerTradeId,
+    BrokerTransactionId,
+    Order,
+    OrderId,
+    OrderMessageKey,
+    OrderReason,
+    OrderReasonCode,
     OrderSide,
     OrderStatus,
     OrderType,
     Position,
     PositionSide,
-    message_key_for_order_result_reason,
+    PositionSideState,
+    Trade,
+    Transaction,
 )
 from core.clock import local_timezone, now
 from core.events import (
@@ -37,9 +40,6 @@ from core.events import (
     StrategyDecisionReason,
     StrategyEvent,
     TradeSide,
-    error_code_for_event_type,
-    message_key_for_event_type,
-    metadata_for_event_type,
 )
 from core.logging import CORE_LOGGER_NAME, LogLevel, configure_logging, get_logger
 from core.models import (
@@ -50,6 +50,7 @@ from core.models import (
     Money,
     new_uuid,
 )
+from core.providers import TradingProvider
 from core.sources import (
     Candle,
     CandleGranularity,
@@ -86,7 +87,6 @@ from core.tasks import (
     TaskTransition,
     TaskType,
     TradingTaskDefinition,
-    normalize_task_action,
 )
 
 __all__ = [
@@ -95,11 +95,16 @@ __all__ = [
     "DEFAULT_TASK_STATE_MACHINE",
     "Account",
     "AccountId",
+    "AccountManager",
+    "AccountProvider",
+    "AccountSummary",
     "BacktestTaskDefinition",
     "BaseTaskDefinition",
     "Broker",
     "BrokerOrderId",
     "BrokerPositionId",
+    "BrokerTradeId",
+    "BrokerTransactionId",
     "CSVCandleSchema",
     "CSVDataSource",
     "CSVDataSourceError",
@@ -125,17 +130,17 @@ __all__ = [
     "LogLevel",
     "Metadata",
     "Money",
-    "OrderRequest",
-    "OrderRequestId",
-    "OrderResult",
-    "OrderResultMessageKey",
-    "OrderResultReason",
-    "OrderResultReasonCode",
+    "Order",
+    "OrderId",
+    "OrderMessageKey",
+    "OrderReason",
+    "OrderReasonCode",
     "OrderSide",
     "OrderStatus",
     "OrderType",
     "Position",
     "PositionSide",
+    "PositionSideState",
     "SpreadFilter",
     "SpreadFilteredDataSource",
     "Strategy",
@@ -157,18 +162,16 @@ __all__ = [
     "TaskType",
     "Tick",
     "TickGranularity",
+    "Trade",
     "TradeSide",
+    "TradingProvider",
     "TradingTaskDefinition",
+    "Transaction",
     "__version__",
     "configure_logging",
-    "error_code_for_event_type",
     "get_logger",
     "local_timezone",
-    "message_key_for_event_type",
-    "message_key_for_order_result_reason",
-    "metadata_for_event_type",
     "new_uuid",
-    "normalize_task_action",
     "now",
 ]
 

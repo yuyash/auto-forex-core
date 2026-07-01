@@ -16,15 +16,12 @@ from core.events.errors import (
     ErrorCode,
     ErrorDetails,
     EventError,
-    error_code_for_event_type,
 )
 from core.events.types import (
     EventMessageKey,
     EventSeverity,
     EventSource,
     EventType,
-    message_key_for_event_type,
-    metadata_for_event_type,
 )
 from core.logging import get_logger
 from core.models.base import DomainModel
@@ -54,17 +51,17 @@ class Event(DomainModel):
             return data
 
         event_type = EventType(data["type"])
-        event_type_metadata = metadata_for_event_type(event_type)
+        event_type_metadata = event_type.metadata
         normalized = dict(data)
         normalized.setdefault("severity", event_type_metadata.severity)
-        normalized.setdefault("message_key", message_key_for_event_type(event_type))
+        normalized.setdefault("message_key", event_type.message_key)
 
         if normalized.get("error") is None and event_type_metadata.severity in {
             EventSeverity.ERROR,
             EventSeverity.CRITICAL,
         }:
             normalized["error"] = {
-                "code": error_code_for_event_type(event_type),
+                "code": ErrorCode.for_event_type(event_type),
                 "retryable": event_type_metadata.retryable,
                 "fatal": event_type_metadata.fatal,
             }
@@ -72,7 +69,7 @@ class Event(DomainModel):
 
         if isinstance(normalized.get("error"), dict):
             error = dict(normalized["error"])
-            error.setdefault("code", error_code_for_event_type(event_type))
+            error.setdefault("code", ErrorCode.for_event_type(event_type))
             error.setdefault("retryable", event_type_metadata.retryable)
             error.setdefault("fatal", event_type_metadata.fatal)
             normalized["error"] = error

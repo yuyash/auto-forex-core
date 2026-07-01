@@ -1,15 +1,16 @@
-"""Broker-neutral order and position models."""
+"""Broker-neutral order, position, and transaction models."""
 
 from __future__ import annotations
 
 from decimal import Decimal
 from enum import StrEnum
 from logging import Logger
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import AwareDatetime, Field, computed_field, field_validator, model_validator
 
+from core.accounts.models import AccountId
 from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
@@ -20,14 +21,14 @@ _LOGGER: Logger = get_logger(__name__)
 
 
 class OrderSide(StrEnum):
-    """Market direction for an order or position."""
+    """Market direction for an order."""
 
     BUY = "buy"
     SELL = "sell"
 
 
 class OrderType(StrEnum):
-    """Broker order types Core understands."""
+    """Broker-neutral order types Core understands."""
 
     MARKET = "market"
     LIMIT = "limit"
@@ -35,8 +36,9 @@ class OrderType(StrEnum):
 
 
 class OrderStatus(StrEnum):
-    """Normalized order execution status."""
+    """Normalized order lifecycle status."""
 
+    PENDING = "pending"
     ACCEPTED = "accepted"
     FILLED = "filled"
     REJECTED = "rejected"
@@ -98,8 +100,16 @@ class BrokerPositionId(_BrokerStringId):
     """Broker-assigned position identifier."""
 
 
-class OrderRequestId(DomainModel):
-    """Server-assigned identifier for an order request."""
+class BrokerTradeId(_BrokerStringId):
+    """Broker-assigned trade identifier."""
+
+
+class BrokerTransactionId(_BrokerStringId):
+    """Broker-assigned transaction identifier."""
+
+
+class OrderId(DomainModel):
+    """Core-assigned identifier for an order."""
 
     value: UUID
 
@@ -116,20 +126,20 @@ class OrderRequestId(DomainModel):
 
     @classmethod
     def new(cls) -> Self:
-        """Create a new time-ordered order request identifier."""
+        """Create a new time-ordered order identifier."""
         return cls(value=new_uuid())
 
     @classmethod
-    def of(cls, value: UUID | str | OrderRequestId) -> Self:
-        """Create an order request identifier from a UUID or UUID string."""
+    def of(cls, value: UUID | str | OrderId) -> Self:
+        """Create an order identifier from a UUID or UUID string."""
         return cls.model_validate(value)
 
     def __str__(self) -> str:
         return str(self.value)
 
 
-class OrderResultReasonCode(StrEnum):
-    """Stable machine-readable reason codes for broker order results."""
+class OrderReasonCode(StrEnum):
+    """Stable machine-readable reason codes for order state."""
 
     NONE = "none"
     ACCEPTED = "accepted"
@@ -148,58 +158,59 @@ class OrderResultReasonCode(StrEnum):
     UNKNOWN = "unknown"
 
 
-class OrderResultMessageKey(StrEnum):
-    """Stable i18n message keys for broker order results."""
+class OrderMessageKey(StrEnum):
+    """Stable i18n message keys for order state."""
 
-    NONE = "broker.order_result.none"
-    ACCEPTED = "broker.order_result.accepted"
-    FILLED = "broker.order_result.filled"
-    PARTIALLY_FILLED = "broker.order_result.partially_filled"
-    REJECTED = "broker.order_result.rejected"
-    CANCELLED = "broker.order_result.cancelled"
-    BROKER_REJECTED = "broker.order_result.broker_rejected"
-    INSUFFICIENT_MARGIN = "broker.order_result.insufficient_margin"
-    INVALID_INSTRUMENT = "broker.order_result.invalid_instrument"
-    INVALID_PRICE = "broker.order_result.invalid_price"
-    INVALID_UNITS = "broker.order_result.invalid_units"
-    MARKET_CLOSED = "broker.order_result.market_closed"
-    RATE_LIMITED = "broker.order_result.rate_limited"
-    TIMEOUT = "broker.order_result.timeout"
-    UNKNOWN = "broker.order_result.unknown"
-
-
-ORDER_RESULT_MESSAGE_KEY_BY_CODE: dict[OrderResultReasonCode, OrderResultMessageKey] = {
-    OrderResultReasonCode.NONE: OrderResultMessageKey.NONE,
-    OrderResultReasonCode.ACCEPTED: OrderResultMessageKey.ACCEPTED,
-    OrderResultReasonCode.FILLED: OrderResultMessageKey.FILLED,
-    OrderResultReasonCode.PARTIALLY_FILLED: OrderResultMessageKey.PARTIALLY_FILLED,
-    OrderResultReasonCode.REJECTED: OrderResultMessageKey.REJECTED,
-    OrderResultReasonCode.CANCELLED: OrderResultMessageKey.CANCELLED,
-    OrderResultReasonCode.BROKER_REJECTED: OrderResultMessageKey.BROKER_REJECTED,
-    OrderResultReasonCode.INSUFFICIENT_MARGIN: OrderResultMessageKey.INSUFFICIENT_MARGIN,
-    OrderResultReasonCode.INVALID_INSTRUMENT: OrderResultMessageKey.INVALID_INSTRUMENT,
-    OrderResultReasonCode.INVALID_PRICE: OrderResultMessageKey.INVALID_PRICE,
-    OrderResultReasonCode.INVALID_UNITS: OrderResultMessageKey.INVALID_UNITS,
-    OrderResultReasonCode.MARKET_CLOSED: OrderResultMessageKey.MARKET_CLOSED,
-    OrderResultReasonCode.RATE_LIMITED: OrderResultMessageKey.RATE_LIMITED,
-    OrderResultReasonCode.TIMEOUT: OrderResultMessageKey.TIMEOUT,
-    OrderResultReasonCode.UNKNOWN: OrderResultMessageKey.UNKNOWN,
-}
+    NONE = "broker.order.none"
+    ACCEPTED = "broker.order.accepted"
+    FILLED = "broker.order.filled"
+    PARTIALLY_FILLED = "broker.order.partially_filled"
+    REJECTED = "broker.order.rejected"
+    CANCELLED = "broker.order.cancelled"
+    BROKER_REJECTED = "broker.order.broker_rejected"
+    INSUFFICIENT_MARGIN = "broker.order.insufficient_margin"
+    INVALID_INSTRUMENT = "broker.order.invalid_instrument"
+    INVALID_PRICE = "broker.order.invalid_price"
+    INVALID_UNITS = "broker.order.invalid_units"
+    MARKET_CLOSED = "broker.order.market_closed"
+    RATE_LIMITED = "broker.order.rate_limited"
+    TIMEOUT = "broker.order.timeout"
+    UNKNOWN = "broker.order.unknown"
 
 
-def message_key_for_order_result_reason(
-    code: OrderResultReasonCode,
-) -> OrderResultMessageKey:
-    """Return the default i18n message key for an order result reason code."""
-    return ORDER_RESULT_MESSAGE_KEY_BY_CODE.get(code, OrderResultMessageKey.UNKNOWN)
+class OrderReason(DomainModel):
+    """Structured order reason suitable for i18n and diagnostics."""
 
+    MESSAGE_KEY_BY_CODE: ClassVar[dict[OrderReasonCode, OrderMessageKey]] = {
+        OrderReasonCode.NONE: OrderMessageKey.NONE,
+        OrderReasonCode.ACCEPTED: OrderMessageKey.ACCEPTED,
+        OrderReasonCode.FILLED: OrderMessageKey.FILLED,
+        OrderReasonCode.PARTIALLY_FILLED: OrderMessageKey.PARTIALLY_FILLED,
+        OrderReasonCode.REJECTED: OrderMessageKey.REJECTED,
+        OrderReasonCode.CANCELLED: OrderMessageKey.CANCELLED,
+        OrderReasonCode.BROKER_REJECTED: OrderMessageKey.BROKER_REJECTED,
+        OrderReasonCode.INSUFFICIENT_MARGIN: OrderMessageKey.INSUFFICIENT_MARGIN,
+        OrderReasonCode.INVALID_INSTRUMENT: OrderMessageKey.INVALID_INSTRUMENT,
+        OrderReasonCode.INVALID_PRICE: OrderMessageKey.INVALID_PRICE,
+        OrderReasonCode.INVALID_UNITS: OrderMessageKey.INVALID_UNITS,
+        OrderReasonCode.MARKET_CLOSED: OrderMessageKey.MARKET_CLOSED,
+        OrderReasonCode.RATE_LIMITED: OrderMessageKey.RATE_LIMITED,
+        OrderReasonCode.TIMEOUT: OrderMessageKey.TIMEOUT,
+        OrderReasonCode.UNKNOWN: OrderMessageKey.UNKNOWN,
+    }
 
-class OrderResultReason(DomainModel):
-    """Structured broker result reason suitable for i18n and diagnostics."""
-
-    code: OrderResultReasonCode = OrderResultReasonCode.NONE
-    message_key: OrderResultMessageKey = OrderResultMessageKey.NONE
+    code: OrderReasonCode = OrderReasonCode.NONE
+    message_key: OrderMessageKey = OrderMessageKey.NONE
     details: Metadata = Field(default_factory=Metadata)
+
+    @classmethod
+    def message_key_for_code(cls, code: OrderReasonCode | str) -> OrderMessageKey:
+        """Return the default i18n message key for an order reason code."""
+        try:
+            reason_code = OrderReasonCode(code)
+        except ValueError:
+            return OrderMessageKey.UNKNOWN
+        return cls.MESSAGE_KEY_BY_CODE.get(reason_code, OrderMessageKey.UNKNOWN)
 
     @model_validator(mode="before")
     @classmethod
@@ -213,117 +224,32 @@ class OrderResultReason(DomainModel):
 
         normalized = dict(data)
         if normalized.get("message_key") is None:
-            code = OrderResultReasonCode(normalized.get("code", OrderResultReasonCode.NONE))
-            normalized["message_key"] = message_key_for_order_result_reason(code)
+            code = OrderReasonCode(normalized.get("code", OrderReasonCode.NONE))
+            normalized["message_key"] = cls.message_key_for_code(code)
             _LOGGER.debug(
-                "Applied order result message key default",
+                "Applied order message key default",
                 extra={
-                    "order_result_reason_code": code.value,
+                    "order_reason_code": code.value,
                     "message_key": normalized["message_key"].value,
                 },
             )
         return normalized
 
 
-class OrderRequest(DomainModel):
-    """Broker-neutral order request produced by the execution layer."""
+class Order(DomainModel):
+    """Broker-neutral order before or after broker execution."""
 
-    request_id: OrderRequestId
+    id: OrderId = Field(default_factory=OrderId.new)
+    broker_order_id: BrokerOrderId | None = None
     instrument: CurrencyPair
     side: OrderSide
     units: Decimal = Field(gt=0)
     order_type: OrderType = OrderType.MARKET
     price: Money | None = None
-    metadata: Metadata = Field(default_factory=Metadata)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_price(cls, data: Any) -> Any:
-        if not isinstance(data, dict) or data.get("price") is None:
-            return data
-
-        instrument = CurrencyPair.of(data["instrument"])
-        normalized = dict(data)
-        normalized["instrument"] = instrument
-        normalized["price"] = _money_with_currency(
-            data["price"],
-            instrument.quote,
-        ).require_positive()
-        return normalized
-
-    @model_validator(mode="after")
-    def _log_order_request(self) -> Self:
-        _LOGGER.debug(
-            "Validated order request %s",
-            self.request_id,
-            extra={
-                "order_request_id": str(self.request_id),
-                "instrument": str(self.instrument),
-                "order_side": self.side.value,
-                "order_type": self.order_type.value,
-                "order_units": str(self.units),
-                "has_price": self.price is not None,
-            },
-        )
-        return self
-
-
-class OrderResult(DomainModel):
-    """Broker-neutral order result returned by a Broker implementation."""
-
-    status: OrderStatus
-    broker_order_id: BrokerOrderId | None = None
-    instrument: CurrencyPair
-    side: OrderSide | None = None
-    requested_units: Decimal = Field(ge=0)
+    status: OrderStatus = OrderStatus.PENDING
     filled_units: Decimal = Field(default=Decimal("0"), ge=0)
     average_fill_price: Money | None = None
-    reason: OrderResultReason = Field(default_factory=OrderResultReason)
-    metadata: Metadata = Field(default_factory=Metadata)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_price(cls, data: Any) -> Any:
-        if not isinstance(data, dict) or data.get("average_fill_price") is None:
-            return data
-
-        instrument = CurrencyPair.of(data["instrument"])
-        normalized = dict(data)
-        normalized["instrument"] = instrument
-        normalized["average_fill_price"] = _money_with_currency(
-            data["average_fill_price"],
-            instrument.quote,
-        ).require_positive()
-        return normalized
-
-    @model_validator(mode="after")
-    def _log_order_result(self) -> Self:
-        _LOGGER.debug(
-            "Validated order result",
-            extra={
-                "broker_order_id": str(self.broker_order_id or ""),
-                "instrument": str(self.instrument),
-                "order_status": self.status.value,
-                "order_side": self.side.value if self.side is not None else "",
-                "requested_units": str(self.requested_units),
-                "filled_units": str(self.filled_units),
-                "has_average_fill_price": self.average_fill_price is not None,
-                "order_result_reason_code": self.reason.code.value,
-            },
-        )
-        return self
-
-
-class Position(DomainModel):
-    """Broker-neutral open position snapshot."""
-
-    instrument: CurrencyPair
-    side: PositionSide
-    units: Decimal = Field(gt=0)
-    average_entry_price: Money
-    broker_position_id: BrokerPositionId | None = None
-    unrealized_pl: Money | None = None
-    opened_at: AwareDatetime | None = None
+    reason: OrderReason = Field(default_factory=OrderReason)
     metadata: Metadata = Field(default_factory=Metadata)
 
     @model_validator(mode="before")
@@ -335,38 +261,268 @@ class Position(DomainModel):
         instrument = CurrencyPair.of(data["instrument"])
         normalized = dict(data)
         normalized["instrument"] = instrument
-        normalized["average_entry_price"] = _money_with_currency(
-            data["average_entry_price"],
-            instrument.quote,
-        ).require_positive()
-        if data.get("unrealized_pl") is not None:
-            unrealized_pl = data["unrealized_pl"]
-            if isinstance(unrealized_pl, Money):
-                normalized["unrealized_pl"] = unrealized_pl
-            elif isinstance(unrealized_pl, dict):
-                normalized["unrealized_pl"] = Money.model_validate(unrealized_pl)
-            else:
-                normalized["unrealized_pl"] = Money.of(unrealized_pl, instrument.quote)
+        if data.get("price") is not None:
+            normalized["price"] = cls._money_with_currency(
+                data["price"],
+                instrument.quote,
+            ).require_positive()
+        if data.get("average_fill_price") is not None:
+            normalized["average_fill_price"] = cls._money_with_currency(
+                data["average_fill_price"],
+                instrument.quote,
+            ).require_positive()
         return normalized
 
     @model_validator(mode="after")
-    def _log_position(self) -> Self:
+    def _validate_order(self) -> Self:
+        if self.filled_units > self.units:
+            msg = "filled units must be less than or equal to order units"
+            raise ValueError(msg)
+        _LOGGER.debug(
+            "Validated order",
+            extra={
+                "order_id": str(self.id),
+                "broker_order_id": str(self.broker_order_id or ""),
+                "instrument": str(self.instrument),
+                "order_side": self.side.value,
+                "order_type": self.order_type.value,
+                "order_units": str(self.units),
+                "order_status": self.status.value,
+                "filled_units": str(self.filled_units),
+            },
+        )
+        return self
+
+    @computed_field
+    @property
+    def remaining_units(self) -> Decimal:
+        """Return unfilled units."""
+        return self.units - self.filled_units
+
+    @staticmethod
+    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
+        if isinstance(value, Money):
+            return value.require_currency(currency)
+        if isinstance(value, dict):
+            return Money.model_validate(value).require_currency(currency)
+        return Money.of(value, currency)
+
+
+class PositionSideState(DomainModel):
+    """State for one side of a broker-neutral instrument position."""
+
+    side: PositionSide
+    units: Decimal = Field(default=Decimal("0"), ge=0)
+    average_entry_price: Money | None = None
+    broker_position_id: BrokerPositionId | None = None
+    unrealized_pl: Money | None = None
+    opened_at: AwareDatetime | None = None
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @model_validator(mode="after")
+    def _validate_side_state(self) -> Self:
+        if self.units > 0 and self.average_entry_price is None:
+            msg = "average entry price is required when position units are open"
+            raise ValueError(msg)
+        return self
+
+    @computed_field
+    @property
+    def is_open(self) -> bool:
+        """Return whether this side has open exposure."""
+        return self.units > 0
+
+
+class Position(DomainModel):
+    """Broker-neutral instrument position that can hold long and short sides."""
+
+    instrument: CurrencyPair
+    long: PositionSideState | None = None
+    short: PositionSideState | None = None
+    unrealized_pl: Money | None = None
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_sides(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        instrument = CurrencyPair.of(data["instrument"])
+        normalized = dict(data)
+        normalized["instrument"] = instrument
+        normalized["long"] = cls._normalize_side(
+            data.get("long"),
+            side=PositionSide.LONG,
+            quote_currency=instrument.quote,
+        )
+        normalized["short"] = cls._normalize_side(
+            data.get("short"),
+            side=PositionSide.SHORT,
+            quote_currency=instrument.quote,
+        )
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_position(self) -> Self:
+        if self.long is not None and self.long.side != PositionSide.LONG:
+            msg = "long side state must have side=long"
+            raise ValueError(msg)
+        if self.short is not None and self.short.side != PositionSide.SHORT:
+            msg = "short side state must have side=short"
+            raise ValueError(msg)
         _LOGGER.debug(
             "Validated broker-neutral position",
             extra={
-                "broker_position_id": str(self.broker_position_id or ""),
                 "instrument": str(self.instrument),
-                "position_side": self.side.value,
-                "position_units": str(self.units),
+                "long_units": str(self.long.units if self.long else ""),
+                "short_units": str(self.short.units if self.short else ""),
                 "has_unrealized_pl": self.unrealized_pl is not None,
             },
         )
         return self
 
+    @computed_field
+    @property
+    def open_sides(self) -> tuple[PositionSide, ...]:
+        """Return sides with open exposure."""
+        sides: list[PositionSide] = []
+        if self.long is not None and self.long.is_open:
+            sides.append(PositionSide.LONG)
+        if self.short is not None and self.short.is_open:
+            sides.append(PositionSide.SHORT)
+        return tuple(sides)
 
-def _money_with_currency(value: Any, currency: Currency | str) -> Money:
-    if isinstance(value, Money):
-        return value.require_currency(currency)
-    if isinstance(value, dict):
-        return Money.model_validate(value).require_currency(currency)
-    return Money.of(value, currency)
+    @computed_field
+    @property
+    def net_units(self) -> Decimal:
+        """Return long units minus short units."""
+        long_units = self.long.units if self.long is not None else Decimal("0")
+        short_units = self.short.units if self.short is not None else Decimal("0")
+        return long_units - short_units
+
+    def side_state(self, side: PositionSide) -> PositionSideState | None:
+        """Return the side state for ``side``."""
+        return self.long if side == PositionSide.LONG else self.short
+
+    def require_side(self, side: PositionSide) -> PositionSideState:
+        """Return an open side state or raise a clear error."""
+        state = self.side_state(side)
+        if state is None or not state.is_open:
+            msg = f"position has no open {side.value} side"
+            raise ValueError(msg)
+        return state
+
+    @classmethod
+    def _normalize_side(
+        cls,
+        value: Any,
+        *,
+        side: PositionSide,
+        quote_currency: Currency | str,
+    ) -> Any:
+        if value is None or isinstance(value, PositionSideState):
+            return value
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        normalized.setdefault("side", side)
+        if normalized.get("average_entry_price") is not None:
+            normalized["average_entry_price"] = cls._money_with_currency(
+                normalized["average_entry_price"],
+                quote_currency,
+            ).require_positive()
+        if normalized.get("unrealized_pl") is not None and not isinstance(
+            normalized["unrealized_pl"],
+            Money,
+        ):
+            if isinstance(normalized["unrealized_pl"], dict):
+                normalized["unrealized_pl"] = Money.model_validate(normalized["unrealized_pl"])
+            else:
+                normalized["unrealized_pl"] = Money.of(
+                    normalized["unrealized_pl"],
+                    quote_currency,
+                )
+        return normalized
+
+    @staticmethod
+    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
+        if isinstance(value, Money):
+            return value.require_currency(currency)
+        if isinstance(value, dict):
+            return Money.model_validate(value).require_currency(currency)
+        return Money.of(value, currency)
+
+
+class Trade(DomainModel):
+    """Broker-neutral trade snapshot."""
+
+    id: BrokerTradeId
+    instrument: CurrencyPair
+    side: PositionSide
+    units: Decimal = Field(gt=0)
+    price: Money | None = None
+    open_time: AwareDatetime | None = None
+    close_time: AwareDatetime | None = None
+    state: str = Field(default="open", min_length=1)
+    realized_pl: Money | None = None
+    unrealized_pl: Money | None = None
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_trade(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        instrument = CurrencyPair.of(data["instrument"])
+        normalized = dict(data)
+        normalized["instrument"] = instrument
+        if normalized.get("price") is not None:
+            normalized["price"] = cls._money_with_currency(normalized["price"], instrument.quote)
+        for field_name in ("realized_pl", "unrealized_pl"):
+            if normalized.get(field_name) is not None and not isinstance(
+                normalized[field_name],
+                Money,
+            ):
+                normalized[field_name] = cls._money_with_currency(
+                    normalized[field_name],
+                    instrument.quote,
+                )
+        if normalized.get("state") is not None:
+            normalized["state"] = str(normalized["state"]).strip().lower()
+        return normalized
+
+    @staticmethod
+    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
+        if isinstance(value, Money):
+            return value.require_currency(currency)
+        if isinstance(value, dict):
+            return Money.model_validate(value).require_currency(currency)
+        return Money.of(value, currency)
+
+
+class Transaction(DomainModel):
+    """Broker-neutral account transaction."""
+
+    id: BrokerTransactionId
+    account_id: AccountId | None = None
+    time: AwareDatetime | None = None
+    type: str = Field(min_length=1)
+    instrument: CurrencyPair | None = None
+    order_id: BrokerOrderId | None = None
+    amount: Money | None = None
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if normalized.get("type") is not None:
+            normalized["type"] = str(normalized["type"]).strip()
+        if normalized.get("instrument") is not None:
+            normalized["instrument"] = CurrencyPair.of(normalized["instrument"])
+        return normalized

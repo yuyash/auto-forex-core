@@ -4,7 +4,6 @@ from typing import Any, cast
 import pytest
 
 from core.events import ErrorCategory, ErrorCode, ErrorDetails, EventError, EventType
-from core.events.errors import error_code_for_event_type
 
 
 def test_error_category_flags_domain_external_and_transient_failures() -> None:
@@ -36,6 +35,6 @@ def test_event_error_models_code_retry_and_details() -> None:
         immutable_details["request_id"] = "req-2"
 
 
-def test_error_code_for_event_type_defaults_unknown_when_unmapped() -> None:
-    assert error_code_for_event_type(EventType.TASK_FAILED) == ErrorCode.TASK_FAILED
-    assert error_code_for_event_type(EventType.TASK_STARTED) == ErrorCode.UNKNOWN
+def test_error_code_resolves_default_for_event_type() -> None:
+    assert ErrorCode.for_event_type(EventType.TASK_FAILED) == ErrorCode.TASK_FAILED
+    assert ErrorCode.for_event_type(EventType.TASK_STARTED) == ErrorCode.UNKNOWN

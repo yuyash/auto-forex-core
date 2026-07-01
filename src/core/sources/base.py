@@ -53,6 +53,42 @@ class DataSource(ABC):
         raw = self._raw_ticks(instrument=instrument, start_at=start_at, end_at=end_at)
         return self._sample_ticks(raw, granularity=granularity)
 
+    def prices(
+        self,
+        *,
+        instruments: Iterable[CurrencyPair],
+        since: datetime | None = None,
+        include_units_available: bool = False,
+        include_home_conversions: bool = False,
+    ) -> Iterable[Tick]:
+        """Return the latest known prices for one or more instruments."""
+        _ = include_units_available
+        _ = include_home_conversions
+        return (
+            tick
+            for instrument in instruments
+            for tick in self.ticks(instrument=instrument, start_at=since)
+        )
+
+    def stream_prices(
+        self,
+        *,
+        instruments: Iterable[CurrencyPair],
+        snapshot: bool = True,
+    ) -> Iterable[Tick]:
+        """Yield live prices for one or more instruments."""
+        _ = snapshot
+        return (tick for instrument in instruments for tick in self.ticks(instrument=instrument))
+
+    def stream_ticks(
+        self,
+        *,
+        instruments: Iterable[CurrencyPair],
+        snapshot: bool = True,
+    ) -> Iterable[Tick]:
+        """Backward-compatible live tick stream alias."""
+        return self.stream_prices(instruments=instruments, snapshot=snapshot)
+
     def candles(
         self,
         *,

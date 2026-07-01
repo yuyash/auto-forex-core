@@ -5,7 +5,6 @@ from core.events.errors import (
     ErrorCode,
     ErrorDetails,
     EventError,
-    error_code_for_event_type,
 )
 from core.events.event import Event
 from core.events.strategy import (
@@ -21,8 +20,6 @@ from core.events.types import (
     EventSource,
     EventType,
     EventTypeMetadata,
-    message_key_for_event_type,
-    metadata_for_event_type,
 )
 
 __all__ = [
@@ -41,7 +38,4 @@ __all__ = [
     "StrategyDecisionReason",
     "StrategyEvent",
     "TradeSide",
-    "error_code_for_event_type",
-    "message_key_for_event_type",
-    "metadata_for_event_type",
 ]
