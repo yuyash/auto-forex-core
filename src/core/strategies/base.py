@@ -54,12 +54,17 @@ class StrategyContext(DomainModel):
     task_id: UUID
     task_type: TaskType
     instrument: CurrencyPair
+    state: StrategyState = Field(default_factory=StrategyState)
     metadata: Metadata = Field(default_factory=Metadata)
 
     @property
     def pip_size(self) -> Decimal:
         """Return the instrument-derived pip size."""
         return self.instrument.pip_size
+
+    def with_state(self, state: StrategyState) -> StrategyContext:
+        """Return a copy of this context carrying the given strategy state."""
+        return self.model_copy(update={"state": state})
 
 
 class StrategyResult(DomainModel):
