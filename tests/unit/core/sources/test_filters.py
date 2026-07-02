@@ -55,7 +55,7 @@ class TestFilters:
                     make_tick(bid="150.10", ask="150.13"),
                 ]
             ),
-            max_spread_pips="1",
+            max_spread_pips=Decimal("1"),
         )
 
         ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))

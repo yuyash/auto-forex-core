@@ -9,7 +9,10 @@ class TestState:
 
         assert state_machine.can(TaskStatus.CREATED, TaskAction.START)
         assert state_machine.next_status(TaskStatus.CREATED, TaskAction.START) == TaskStatus.RUNNING
-        assert state_machine.next_status(TaskStatus.RUNNING, "complete") == TaskStatus.COMPLETED
+        assert (
+            state_machine.next_status(TaskStatus.RUNNING, TaskAction.COMPLETE)
+            == TaskStatus.COMPLETED
+        )
         assert TaskAction.RESTART in state_machine.allowed_actions(TaskStatus.COMPLETED)
         assert any(
             transition.source == TaskStatus.RUNNING

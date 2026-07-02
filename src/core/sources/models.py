@@ -157,7 +157,7 @@ class Candle(DomainModel):
 
     instrument: CurrencyPair
     timestamp: AwareDatetime
-    granularity: CandleGranularity | str = Field(min_length=1)
+    granularity: CandleGranularity
     open: Money
     high: Money
     low: Money

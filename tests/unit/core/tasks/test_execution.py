@@ -108,8 +108,6 @@ class TestExecution:
         assert failed.failure.message == "data source unavailable"
         assert failed.failure.code == ErrorCode.TASK_FAILED
         assert failed.failure.category == ErrorCategory.TASK
-        # Back-compat string accessor.
-        assert failed.failure_reason == "data source unavailable"
 
     def test_executable_task_fail_with_exception_captures_traceback(self) -> None:
         running = ExecutableTask.from_definition(_definition()).start()
@@ -136,7 +134,6 @@ class TestExecution:
         failed = running.fail(failure)
 
         assert failed.failure == failure
-        assert failed.failure_reason == "broker rejected order"
 
     def test_executable_task_restart_clears_failure(self) -> None:
         failed = ExecutableTask.from_definition(_definition()).start().fail("boom")
@@ -144,4 +141,3 @@ class TestExecution:
         restarted = failed.restart()
 
         assert restarted.failure is None
-        assert restarted.failure_reason == ""

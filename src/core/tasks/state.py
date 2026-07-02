@@ -45,11 +45,6 @@ class TaskAction(StrEnum):
     COMPLETE = "complete"
     FAIL = "fail"
 
-    @classmethod
-    def of(cls, action: TaskAction | str) -> TaskAction:
-        """Return a TaskAction from enum or string input."""
-        return action if isinstance(action, cls) else cls(action)
-
 
 class TaskStateError(ValueError):
     """Raised when a task lifecycle transition is not allowed."""
@@ -150,30 +145,28 @@ class TaskStateMachine:
         )
         return actions
 
-    def can(self, status: TaskStatus, action: TaskAction | str) -> bool:
+    def can(self, status: TaskStatus, action: TaskAction) -> bool:
         """Return whether the action can be applied to the status."""
-        normalized = TaskAction.of(action)
-        allowed = normalized in self.allowed_actions(status)
+        allowed = action in self.allowed_actions(status)
         _LOGGER.debug(
             "Checked task transition permission",
             extra={
                 "task_status": status.value,
-                "task_action": normalized.value,
+                "task_action": action.value,
                 "transition_allowed": allowed,
             },
         )
         return allowed
 
-    def next_status(self, status: TaskStatus, action: TaskAction | str) -> TaskStatus:
+    def next_status(self, status: TaskStatus, action: TaskAction) -> TaskStatus:
         """Return the status reached by applying an action."""
-        normalized = TaskAction.of(action)
         try:
-            target = self._transitions[status][normalized]
+            target = self._transitions[status][action]
             _LOGGER.debug(
                 "Resolved next task status",
                 extra={
                     "task_status": status.value,
-                    "task_action": normalized.value,
+                    "task_action": action.value,
                     "task_next_status": target.value,
                 },
             )
@@ -181,14 +174,14 @@ class TaskStateMachine:
         except KeyError as exc:
             _LOGGER.warning(
                 "Rejected task lifecycle transition %s while status is %s",
-                normalized.value,
+                action.value,
                 status.value,
                 extra={
-                    "task_action": normalized.value,
+                    "task_action": action.value,
                     "task_status": status.value,
                 },
             )
-            msg = f"cannot {normalized.value} task while status is {status.value}"
+            msg = f"cannot {action.value} task while status is {status.value}"
             raise TaskStateError(msg) from exc
 
     def transition(
@@ -196,18 +189,17 @@ class TaskStateMachine:
         *,
         task_id: UUID,
         status: TaskStatus,
-        action: TaskAction | str,
+        action: TaskAction,
     ) -> TaskStatus:
         """Return the next status or raise TaskStateError with task context."""
-        normalized = TaskAction.of(action)
         try:
-            target = self._transitions[status][normalized]
+            target = self._transitions[status][action]
             _LOGGER.debug(
                 "Resolved task lifecycle transition",
                 extra={
                     "task_id": str(task_id),
                     "task_status": status.value,
-                    "task_action": normalized.value,
+                    "task_action": action.value,
                     "task_next_status": target.value,
                 },
             )
@@ -216,15 +208,15 @@ class TaskStateMachine:
             _LOGGER.warning(
                 "Rejected task %s lifecycle transition %s while status is %s",
                 task_id,
-                normalized.value,
+                action.value,
                 status.value,
                 extra={
                     "task_id": str(task_id),
-                    "task_action": normalized.value,
+                    "task_action": action.value,
                     "task_status": status.value,
                 },
             )
-            msg = f"cannot {normalized.value} task {task_id} while status is {status.value}"
+            msg = f"cannot {action.value} task {task_id} while status is {status.value}"
             raise TaskStateError(msg) from exc
 
     def assert_allowed(
@@ -232,7 +224,7 @@ class TaskStateMachine:
         *,
         task_id: UUID,
         status: TaskStatus,
-        action: TaskAction | str,
+        action: TaskAction,
     ) -> None:
         """Raise TaskStateError when a transition is not allowed."""
         _LOGGER.debug(
@@ -240,7 +232,7 @@ class TaskStateMachine:
             extra={
                 "task_id": str(task_id),
                 "task_status": status.value,
-                "task_action": TaskAction.of(action).value,
+                "task_action": action.value,
             },
         )
         self.transition(task_id=task_id, status=status, action=action)

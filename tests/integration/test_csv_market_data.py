@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from core import CSVDataSource, CurrencyPair, Metadata, Money
+from core import CandleGranularity, CSVDataSource, CurrencyPair, Metadata, Money
 
 
 class TestCSVMarketData:
@@ -30,7 +30,12 @@ class TestCSVMarketData:
         source = CSVDataSource(tick_path=tick_path, candle_path=candle_path)
 
         ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))
-        candles = tuple(source.candles(instrument=CurrencyPair.of("USD_JPY"), granularity="M1"))
+        candles = tuple(
+            source.candles(
+                instrument=CurrencyPair.of("USD_JPY"),
+                granularity=CandleGranularity.MINUTE_1,
+            )
+        )
 
         assert [tick.effective_mid for tick in ticks] == [
             Money.of("150.11", "JPY"),

@@ -10,7 +10,7 @@ from typing import Protocol
 from core.logging import get_logger
 from core.models import CurrencyPair
 from core.models.base import DomainModel
-from core.sources.models import Candle, Tick, TickGranularity
+from core.sources.models import Candle, CandleGranularity, Tick, TickGranularity
 
 _LOGGER = get_logger(__name__)
 
@@ -124,20 +124,11 @@ class DataSource(ABC):
         _ = snapshot
         return (tick for instrument in instruments for tick in self.ticks(instrument=instrument))
 
-    def stream_ticks(
-        self,
-        *,
-        instruments: Iterable[CurrencyPair],
-        snapshot: bool = True,
-    ) -> Iterable[Tick]:
-        """Backward-compatible live tick stream alias."""
-        return self.stream_prices(instruments=instruments, snapshot=snapshot)
-
     def candles(
         self,
         *,
         instrument: CurrencyPair,
-        granularity: str,
+        granularity: CandleGranularity,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Candle]:

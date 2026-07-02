@@ -204,13 +204,9 @@ class OrderReason(DomainModel):
     details: Metadata = Field(default_factory=Metadata)
 
     @classmethod
-    def message_key_for_code(cls, code: OrderReasonCode | str) -> OrderMessageKey:
+    def message_key_for_code(cls, code: OrderReasonCode) -> OrderMessageKey:
         """Return the default i18n message key for an order reason code."""
-        try:
-            reason_code = OrderReasonCode(code)
-        except ValueError:
-            return OrderMessageKey.UNKNOWN
-        return cls.MESSAGE_KEY_BY_CODE.get(reason_code, OrderMessageKey.UNKNOWN)
+        return cls.MESSAGE_KEY_BY_CODE.get(code, OrderMessageKey.UNKNOWN)
 
     @model_validator(mode="before")
     @classmethod
@@ -411,7 +407,7 @@ class Position(DomainModel):
         value: Any,
         *,
         side: PositionSide,
-        quote_currency: Currency | str,
+        quote_currency: Currency,
     ) -> Any:
         if value is None or isinstance(value, PositionSideState):
             return value

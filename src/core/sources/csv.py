@@ -17,7 +17,7 @@ from core.clock import local_timezone
 from core.logging import get_logger
 from core.models import CurrencyPair, Metadata
 from core.sources.base import DataSource
-from core.sources.models import Candle, Tick
+from core.sources.models import Candle, CandleGranularity, Tick
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -269,7 +269,7 @@ class CSVDataSource(DataSource):
         self,
         *,
         instrument: CurrencyPair,
-        granularity: str,
+        granularity: CandleGranularity,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Candle]:
@@ -279,7 +279,7 @@ class CSVDataSource(DataSource):
                 "CSV candle path is not configured",
                 extra={
                     "instrument": str(instrument),
-                    "granularity": granularity,
+                    "granularity": granularity.value,
                     "data_kind": "candle",
                 },
             )
@@ -291,7 +291,7 @@ class CSVDataSource(DataSource):
             extra={
                 "csv_path": self._paths_log(self.candle_paths),
                 "instrument": str(requested_instrument),
-                "granularity": granularity,
+                "granularity": granularity.value,
                 "data_kind": "candle",
             },
         )
@@ -317,7 +317,7 @@ class CSVDataSource(DataSource):
                         },
                     )
                     continue
-                if str(candle.granularity) != granularity:
+                if candle.granularity != granularity:
                     continue
                 if not self._is_in_range(candle.timestamp, start_at=start_at, end_at=end_at):
                     continue
@@ -329,7 +329,7 @@ class CSVDataSource(DataSource):
             extra={
                 "csv_path": self._paths_log(self.candle_paths),
                 "instrument": str(requested_instrument),
-                "granularity": granularity,
+                "granularity": granularity.value,
                 "data_kind": "candle",
                 "yielded_count": yielded_count,
             },
@@ -373,7 +373,7 @@ class CSVDataSource(DataSource):
         self,
         row: _CSVRow,
         instrument: CurrencyPair,
-        granularity: str,
+        granularity: CandleGranularity,
     ) -> Candle:
         schema = self.candle_schema
         row_instrument = self._optional(row, schema.instrument)
@@ -389,7 +389,7 @@ class CSVDataSource(DataSource):
                 row,
                 timestamp_format=schema.timestamp_format,
             ),
-            "granularity": row_granularity or granularity,
+            "granularity": CandleGranularity(row_granularity or granularity.value),
             "open": self._require(row, schema.open),
             "high": self._require(row, schema.high),
             "low": self._require(row, schema.low),

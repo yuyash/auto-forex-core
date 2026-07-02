@@ -58,11 +58,6 @@ class TradingProvider:
         """Return the market-data service."""
         return self._data
 
-    @property
-    def data_source(self) -> DataSource:
-        """Backward-compatible alias for the market-data service."""
-        return self._data
-
     def close(self) -> None:
         """Close bundled services that expose a ``close`` method."""
         for service in (self._data, self._broker, self._account_manager):

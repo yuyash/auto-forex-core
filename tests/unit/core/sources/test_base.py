@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
-from core import Candle, CurrencyPair, Money, Tick, TickGranularity
+from core import Candle, CandleGranularity, CurrencyPair, Money, Tick, TickGranularity
 from core.sources import DataSource
 
 USD_JPY = CurrencyPair.of("USD_JPY")
@@ -54,7 +54,8 @@ class TestBase:
         source = EmptyDataSource()
 
         candles: Iterable[Candle] = source.candles(
-            instrument=CurrencyPair.of("USD_JPY"), granularity="M1"
+            instrument=CurrencyPair.of("USD_JPY"),
+            granularity=CandleGranularity.MINUTE_1,
         )
 
         assert tuple(candles) == ()

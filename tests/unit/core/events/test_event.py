@@ -31,9 +31,9 @@ class TestEvent:
         assert debug_event.metadata == Metadata.of(sequence=1)
 
     def test_event_accepts_runtime_owned_source_values(self) -> None:
-        event = Event(type=EventType.TASK_STARTED, source="server")
+        event = Event(type=EventType.TASK_STARTED, source=EventSource.SERVER)
 
-        assert event.source == "server"
+        assert event.source == EventSource.SERVER
 
     def test_warning_retryable_and_fatal_events_have_handling_metadata(self) -> None:
         warning = Event.warning(

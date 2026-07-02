@@ -78,11 +78,6 @@ class ExecutableTask(DomainModel):
     failure: TaskFailure | None = None
     run_count: int = Field(default=0, ge=0)
 
-    @property
-    def failure_reason(self) -> str:
-        """Return the failure message, or an empty string when not failed."""
-        return self.failure.message if self.failure is not None else ""
-
     @classmethod
     def from_definition(
         cls,
@@ -139,13 +134,13 @@ class ExecutableTask(DomainModel):
         """Return whether the task has reached a terminal state."""
         return self.status in {TaskStatus.STOPPED, TaskStatus.COMPLETED, TaskStatus.FAILED}
 
-    def can(self, action: TaskAction | str) -> bool:
+    def can(self, action: TaskAction) -> bool:
         """Return whether the lifecycle action is valid for the current status."""
         allowed = DEFAULT_TASK_STATE_MACHINE.can(self.status, action)
         _LOGGER.debug(
             "Checked executable task action permission",
             extra=self._log_extra(
-                task_action=action.value if isinstance(action, TaskAction) else action,
+                task_action=action.value,
                 transition_allowed=allowed,
             ),
         )

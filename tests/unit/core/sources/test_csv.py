@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from core import CurrencyPair, Metadata, Money, TickGranularity
+from core import CandleGranularity, CurrencyPair, Metadata, Money, TickGranularity
 from core.clock import local_timezone
 from core.sources import CSVCandleSchema, CSVDataSource, CSVDataSourceError, CSVTickSchema
 
@@ -68,7 +68,12 @@ class TestCSV:
         )
         source = CSVDataSource(candle_path=candle_path)
 
-        candles = tuple(source.candles(instrument=CurrencyPair.of("EUR_USD"), granularity="M1"))
+        candles = tuple(
+            source.candles(
+                instrument=CurrencyPair.of("EUR_USD"),
+                granularity=CandleGranularity.MINUTE_1,
+            )
+        )
 
         assert len(candles) == 1
         # Naive timestamps are interpreted in the local zone by default.
@@ -92,7 +97,12 @@ class TestCSV:
         )
         source = CSVDataSource(candle_path=candle_path, assume_timezone=ZoneInfo("Asia/Tokyo"))
 
-        candles = tuple(source.candles(instrument=CurrencyPair.of("EUR_USD"), granularity="M1"))
+        candles = tuple(
+            source.candles(
+                instrument=CurrencyPair.of("EUR_USD"),
+                granularity=CandleGranularity.MINUTE_1,
+            )
+        )
 
         assert candles[0].timestamp == datetime(2026, 1, 1, tzinfo=ZoneInfo("Asia/Tokyo"))
 
@@ -148,7 +158,12 @@ class TestCSV:
             candle_schema=CSVCandleSchema.polygon_forex_minute_aggs(),
         )
 
-        candles = tuple(source.candles(instrument=CurrencyPair.of("EUR_USD"), granularity="M1"))
+        candles = tuple(
+            source.candles(
+                instrument=CurrencyPair.of("EUR_USD"),
+                granularity=CandleGranularity.MINUTE_1,
+            )
+        )
 
         assert len(candles) == 99
         assert candles[0].instrument == CurrencyPair.of("EUR_USD")
@@ -165,7 +180,13 @@ class TestCSV:
         )
 
         candles = tuple(
-            islice(source.candles(instrument=CurrencyPair.of("AED_AUD"), granularity="M1"), 2)
+            islice(
+                source.candles(
+                    instrument=CurrencyPair.of("AED_AUD"),
+                    granularity=CandleGranularity.MINUTE_1,
+                ),
+                2,
+            )
         )
 
         assert len(candles) == 2

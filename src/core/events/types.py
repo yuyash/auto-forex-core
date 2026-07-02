@@ -51,6 +51,7 @@ class EventSource(StrEnum):
     """Core-owned and generic components that can emit events."""
 
     CORE = "core"
+    SERVER = "server"
     STRATEGY = "strategy"
     BROKER = "broker"
     DATA_SOURCE = "data_source"

@@ -7,6 +7,7 @@ from core import (
     Account,
     BacktestTaskDefinition,
     Candle,
+    CandleGranularity,
     CSVCandleSchema,
     CSVDataSource,
     CSVTickSchema,
@@ -129,7 +130,7 @@ class TestForexQuotesTaskFlow:
     def test_forex_minute_aggs_data_source_generates_candles(self) -> None:
         source = ForexMinuteAggsExampleDataSource()
 
-        candles = tuple(source.candles(instrument=EUR_USD, granularity="M1"))
+        candles = tuple(source.candles(instrument=EUR_USD, granularity=CandleGranularity.MINUTE_1))
 
         assert len(candles) == 99
         assert candles[0].timestamp == datetime(2023, 3, 28, tzinfo=UTC)
@@ -295,7 +296,10 @@ def _run_candles_through_task(
         instrument=definition.instrument,
         metadata=Metadata.of(strategy_name=strategy.name),
     )
-    candles = source.candles(instrument=definition.instrument, granularity="M1")
+    candles = source.candles(
+        instrument=definition.instrument,
+        granularity=CandleGranularity.MINUTE_1,
+    )
     selected_candles = _take(candles, limit=limit)
     events = tuple(
         event for candle in selected_candles for event in strategy.on_candle(candle, context).events

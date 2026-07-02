@@ -156,9 +156,10 @@ class Money(DomainModel):
     @classmethod
     def of(cls, amount: Money | Decimal | int | str, currency: Currency | str) -> Money:
         """Create money from a numeric amount and currency."""
+        expected_currency = Currency.of(currency)
         if isinstance(amount, Money):
-            return amount.require_currency(currency)
-        return cls(amount=Decimal(str(amount)), currency=Currency.of(currency))
+            return amount.require_currency(expected_currency)
+        return cls(amount=Decimal(str(amount)), currency=expected_currency)
 
     @classmethod
     def coerce(
@@ -167,15 +168,16 @@ class Money(DomainModel):
         currency: Currency | str,
     ) -> Money:
         """Coerce a raw amount, mapping, or Money into the requested currency."""
+        expected_currency = Currency.of(currency)
         if isinstance(value, Money):
-            return value.require_currency(currency)
+            return value.require_currency(expected_currency)
         if isinstance(value, Mapping):
-            return cls.model_validate(value).require_currency(currency)
-        return cls.of(value, currency)
+            return cls.model_validate(value).require_currency(expected_currency)
+        return cls.of(value, expected_currency)
 
-    def require_currency(self, currency: Currency | str) -> Self:
+    def require_currency(self, currency: Currency) -> Self:
         """Return self when currencies match, otherwise raise ValueError."""
-        expected = Currency.of(currency)
+        expected = currency
         if self.currency != expected:
             _LOGGER.debug(
                 "Rejected money currency mismatch",

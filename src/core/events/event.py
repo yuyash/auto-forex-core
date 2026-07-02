@@ -38,7 +38,7 @@ class Event(DomainModel):
     type: EventType
     severity: EventSeverity = EventSeverity.INFO
     timestamp: AwareDatetime = Field(default_factory=now)
-    source: EventSource | str = EventSource.CORE
+    source: EventSource = EventSource.CORE
     task_id: UUID | None = None
     message_key: EventMessageKey = EventMessageKey.NONE
     error: EventError | None = None
@@ -222,5 +222,4 @@ class Event(DomainModel):
         }
 
     def _source_value(self) -> str:
-        value = getattr(self.source, "value", self.source)
-        return str(value)
+        return self.source.value

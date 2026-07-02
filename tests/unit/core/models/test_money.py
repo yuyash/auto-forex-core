@@ -24,10 +24,10 @@ class TestMoney:
     def test_money_requires_matching_currency_and_positive_amount(self) -> None:
         money = Money.of("10", "USD")
 
-        assert money.require_currency("USD") == money
+        assert money.require_currency(Currency.of("USD")) == money
         assert money.require_positive() == money
         with pytest.raises(ValueError, match="currency mismatch"):
-            money.require_currency("JPY")
+            money.require_currency(Currency.of("JPY"))
         with pytest.raises(ValueError, match="greater than 0"):
             Money.of("0", "USD").require_positive()
 

@@ -13,7 +13,7 @@ from core.logging import get_logger
 from core.models import CurrencyPair
 from core.models.base import DomainModel
 from core.sources.base import DataSource, DataSourceFilter
-from core.sources.models import Candle, Tick, TickGranularity
+from core.sources.models import Candle, CandleGranularity, Tick, TickGranularity
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -152,7 +152,7 @@ class FilteredDataSource(DataSource):
         self,
         *,
         instrument: CurrencyPair,
-        granularity: str,
+        granularity: CandleGranularity,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Candle]:
@@ -181,7 +181,7 @@ class SpreadFilteredDataSource(DataSource):
         source: DataSource,
         *,
         spread_filter: SpreadFilter | None = None,
-        max_spread_pips: Decimal | int | str | None = None,
+        max_spread_pips: Decimal | None = None,
         enabled: bool = True,
     ) -> None:
         if spread_filter is not None and max_spread_pips is not None:
@@ -217,7 +217,7 @@ class SpreadFilteredDataSource(DataSource):
         self,
         *,
         instrument: CurrencyPair,
-        granularity: str,
+        granularity: CandleGranularity,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Candle]:
@@ -234,7 +234,7 @@ class SpreadFilteredDataSource(DataSource):
         self._filtered_source.close()
 
     @staticmethod
-    def _optional_decimal(value: Decimal | int | str | None) -> Decimal | None:
+    def _optional_decimal(value: Decimal | None) -> Decimal | None:
         if value is None:
             return None
-        return Decimal(str(value))
+        return value

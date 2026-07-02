@@ -7,6 +7,7 @@ from core import (
     Event,
     EventType,
     LogLevel,
+    TaskAction,
     TaskStateMachine,
     TaskStatus,
     TradingProvider,
@@ -27,5 +28,5 @@ class TestInit:
         assert CSVDataSource.__name__ == "CSVDataSource"
         assert LogLevel.WARNING.value == "WARNING"
         assert Event(type=EventType.TASK_STARTED).type == EventType.TASK_STARTED
-        assert TaskStateMachine.default().can(TaskStatus.CREATED, "start")
+        assert TaskStateMachine.default().can(TaskStatus.CREATED, TaskAction.START)
         assert TradingProvider.__name__ == "TradingProvider"
