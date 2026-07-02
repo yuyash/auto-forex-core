@@ -1,4 +1,4 @@
-"""Market data models used by AutoForex execution flows."""
+"""Market data models."""
 
 from __future__ import annotations
 
@@ -92,12 +92,12 @@ class Tick(DomainModel):
         instrument = CurrencyPair.of(data["instrument"])
         normalized = dict(data)
         normalized["instrument"] = instrument
-        normalized["bid"] = Money.of(data["bid"], instrument.quote).require_positive()
-        normalized["ask"] = Money.of(data["ask"], instrument.quote).require_positive()
+        normalized["bid"] = Money.coerce(data["bid"], instrument.quote).require_positive()
+        normalized["ask"] = Money.coerce(data["ask"], instrument.quote).require_positive()
         if data.get("mid") is None:
             normalized["mid"] = (normalized["bid"] + normalized["ask"]) / 2
         else:
-            normalized["mid"] = Money.of(data["mid"], instrument.quote).require_positive()
+            normalized["mid"] = Money.coerce(data["mid"], instrument.quote).require_positive()
         return normalized
 
     @model_validator(mode="after")
@@ -177,7 +177,7 @@ class Candle(DomainModel):
         normalized["instrument"] = instrument
         for field_name in ("open", "high", "low", "close"):
             if data.get(field_name) is not None:
-                normalized[field_name] = Money.of(
+                normalized[field_name] = Money.coerce(
                     data[field_name],
                     instrument.quote,
                 ).require_positive()

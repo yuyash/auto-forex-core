@@ -1,11 +1,11 @@
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
-from core import CurrencyPair, Tick
-from core.sources import DataSource, SpreadFilter, SpreadFilteredDataSource
+from core import Candle, CurrencyPair, Money, Tick, TickGranularity
+from core.sources import DataSource, FilteredDataSource, SpreadFilter, SpreadFilteredDataSource
 
 
 class MemoryDataSource(DataSource):
@@ -29,64 +29,97 @@ class MemoryDataSource(DataSource):
         self.closed = True
 
 
-def test_spread_filter_calculates_spread_pips_from_instrument() -> None:
-    tick = make_tick(bid="150.10", ask="150.13")
+class MinimumBidFilter:
+    def __init__(self, minimum_bid: Decimal) -> None:
+        self.minimum_bid = minimum_bid
 
-    assert SpreadFilter.of("3").spread_pips(tick) == Decimal("3")
+    def filter_ticks(self, ticks: Iterable[Tick]) -> Iterable[Tick]:
+        return (tick for tick in ticks if tick.bid.amount >= self.minimum_bid)
 
-
-def test_spread_filtered_data_source_filters_ticks_above_max_spread() -> None:
-    source = SpreadFilteredDataSource(
-        MemoryDataSource(
-            [
-                make_tick(bid="150.10", ask="150.11"),
-                make_tick(bid="150.10", ask="150.13"),
-            ]
-        ),
-        max_spread_pips="1",
-    )
-
-    ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))
-
-    assert len(ticks) == 1
-    assert ticks[0].ask.amount == Decimal("150.11")
+    def filter_candles(self, candles: Iterable[Candle]) -> Iterable[Candle]:
+        _ = self
+        return candles
 
 
-def test_spread_filtered_data_source_can_be_disabled_without_threshold() -> None:
-    source = SpreadFilteredDataSource(
-        MemoryDataSource(
-            [
-                make_tick(bid="150.10", ask="150.11"),
-                make_tick(bid="150.10", ask="150.13"),
-            ]
-        ),
-        enabled=False,
-    )
+class TestFilters:
+    def test_spread_filter_calculates_spread_pips_from_instrument(self) -> None:
+        tick = make_tick(bid="150.10", ask="150.13")
 
-    ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))
+        assert SpreadFilter.of("3").spread_pips(tick) == Decimal("3")
 
-    assert len(ticks) == 2
+    def test_spread_filtered_data_source_filters_ticks_above_max_spread(self) -> None:
+        source = SpreadFilteredDataSource(
+            MemoryDataSource(
+                [
+                    make_tick(bid="150.10", ask="150.11"),
+                    make_tick(bid="150.10", ask="150.13"),
+                ]
+            ),
+            max_spread_pips="1",
+        )
+
+        ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))
+
+        assert len(ticks) == 1
+        assert ticks[0].ask.amount == Decimal("150.11")
+
+    def test_spread_filtered_data_source_can_be_disabled_without_threshold(self) -> None:
+        source = SpreadFilteredDataSource(
+            MemoryDataSource(
+                [
+                    make_tick(bid="150.10", ask="150.11"),
+                    make_tick(bid="150.10", ask="150.13"),
+                ]
+            ),
+            enabled=False,
+        )
+
+        ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))
+
+        assert len(ticks) == 2
+
+    def test_filtered_data_source_applies_custom_filters_before_granularity(self) -> None:
+        source = FilteredDataSource(
+            MemoryDataSource(
+                [
+                    make_tick(bid="150.00", ask="150.00", offset_seconds=0),
+                    make_tick(bid="150.10", ask="150.10", offset_seconds=1),
+                    make_tick(bid="150.20", ask="150.20", offset_seconds=60),
+                ]
+            ),
+            filters=(MinimumBidFilter(Decimal("150.10")),),
+        )
+
+        ticks = tuple(
+            source.ticks(
+                instrument=CurrencyPair.of("USD_JPY"),
+                granularity=TickGranularity.MINUTE_1,
+            )
+        )
+
+        assert [tick.bid for tick in ticks] == [
+            Money.of("150.10", "JPY"),
+            Money.of("150.20", "JPY"),
+        ]
+
+    def test_spread_filter_requires_max_spread_when_enabled(self) -> None:
+        with pytest.raises(ValueError, match="max_spread_pips is required"):
+            SpreadFilter()
+
+    def test_spread_filtered_data_source_delegates_close(self) -> None:
+        wrapped = MemoryDataSource(())
+        source = SpreadFilteredDataSource(wrapped, enabled=False)
+
+        source.close()
+
+        assert wrapped.closed is True
 
 
-def test_spread_filter_requires_max_spread_when_enabled() -> None:
-    with pytest.raises(ValueError, match="max_spread_pips is required"):
-        SpreadFilter()
-
-
-def test_spread_filtered_data_source_delegates_close() -> None:
-    wrapped = MemoryDataSource(())
-    source = SpreadFilteredDataSource(wrapped, enabled=False)
-
-    source.close()
-
-    assert wrapped.closed is True
-
-
-def make_tick(*, bid: str, ask: str) -> Tick:
+def make_tick(*, bid: str, ask: str, offset_seconds: int = 0) -> Tick:
     return Tick.model_validate(
         {
             "instrument": CurrencyPair.of("USD_JPY"),
-            "timestamp": datetime(2026, 1, 1, tzinfo=UTC),
+            "timestamp": datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=offset_seconds),
             "bid": bid,
             "ask": ask,
         }

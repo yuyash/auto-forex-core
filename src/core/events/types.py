@@ -48,14 +48,9 @@ class EventSeverity(StrEnum):
 
 
 class EventSource(StrEnum):
-    """Known components that can emit events."""
+    """Core-owned and generic components that can emit events."""
 
     CORE = "core"
-    SERVER = "server"
-    API = "api"
-    WEB = "web"
-    OANDA = "oanda"
-    SNOWBALL = "snowball"
     STRATEGY = "strategy"
     BROKER = "broker"
     DATA_SOURCE = "data_source"

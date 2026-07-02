@@ -22,37 +22,38 @@ class HoldStrategy(Strategy):
         )
 
 
-def test_strategy_normalizes_parameters_and_context() -> None:
-    strategy = HoldStrategy(
-        name="hold",
-        parameters={"risk_percent": Decimal("1.5")},
-    )
-    context = StrategyContext(
-        task_id=__import__("core").new_uuid(),
-        task_type=TaskType.BACKTEST,
-        instrument=CurrencyPair.of("USD_JPY"),
-        metadata=Metadata.of(source="unit"),
-    )
-    tick = Tick(
-        instrument=CurrencyPair.of("USD_JPY"),
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        bid=Money.of("150.10", "JPY"),
-        ask=Money.of("150.12", "JPY"),
-    )
+class TestBase:
+    def test_strategy_normalizes_parameters_and_context(self) -> None:
+        strategy = HoldStrategy(
+            name="hold",
+            parameters={"risk_percent": Decimal("1.5")},
+        )
+        context = StrategyContext(
+            task_id=__import__("core").new_uuid(),
+            task_type=TaskType.BACKTEST,
+            instrument=CurrencyPair.of("USD_JPY"),
+            metadata=Metadata.of(source="unit"),
+        )
+        tick = Tick(
+            instrument=CurrencyPair.of("USD_JPY"),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            bid=Money.of("150.10", "JPY"),
+            ask=Money.of("150.12", "JPY"),
+        )
 
-    result = strategy.on_tick(tick, context)
-    log_extra = strategy._log_extra(context=context)
+        result = strategy.on_tick(tick, context)
+        log_extra = strategy._log_extra(context=context)
 
-    assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
-    assert context.pip_size == Decimal("0.01")
-    assert result.state == StrategyState.of(seen_ticks=1)
-    assert result.events[0].task_id == context.task_id
-    assert log_extra.strategy_name == "hold"
-    assert dict(log_extra) == {
-        "task_id": str(context.task_id),
-        "task_type": TaskType.BACKTEST.value,
-        "strategy_name": "hold",
-        "strategy_class": "HoldStrategy",
-        "instrument": "USD_JPY",
-        "parameter_count": 1,
-    }
+        assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
+        assert context.pip_size == Decimal("0.01")
+        assert result.state == StrategyState.of(seen_ticks=1)
+        assert result.events[0].task_id == context.task_id
+        assert log_extra.strategy_name == "hold"
+        assert dict(log_extra) == {
+            "task_id": str(context.task_id),
+            "task_type": TaskType.BACKTEST.value,
+            "strategy_name": "hold",
+            "strategy_class": "HoldStrategy",
+            "instrument": "USD_JPY",
+            "parameter_count": 1,
+        }

@@ -1,4 +1,4 @@
-"""Logging utilities for Core library users."""
+"""Logging utilities for core library and standalone scripts."""
 
 from __future__ import annotations
 

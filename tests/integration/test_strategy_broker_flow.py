@@ -112,41 +112,42 @@ class MemoryBroker(Broker):
         return (position,)
 
 
-def test_core_ports_work_together_for_strategy_and_broker_flow() -> None:
-    task_id = new_uuid()
-    tick = Tick(
-        instrument=USD_JPY,
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        bid=Money.of("150.10", "JPY"),
-        ask=Money.of("150.12", "JPY"),
-    )
-    data_source = MemoryDataSource([tick])
-    strategy = HoldStrategy(
-        name="snowball",
-        parameters={"risk_percent": Decimal("1.5")},
-    )
-    context = StrategyContext(
-        task_id=task_id,
-        task_type=TaskType.BACKTEST,
-        instrument=USD_JPY,
-        metadata=Metadata.of(strategy_name="snowball"),
-    )
-    broker = MemoryBroker()
-
-    loaded_ticks = tuple(data_source.ticks(instrument=USD_JPY))
-    result = strategy.on_tick(loaded_ticks[0], context)
-    placed_order = broker.place_order(
-        Order(
+class TestStrategyBrokerFlow:
+    def test_core_ports_work_together_for_strategy_and_broker_flow(self) -> None:
+        task_id = new_uuid()
+        tick = Tick(
             instrument=USD_JPY,
-            side=OrderSide.BUY,
-            units=Decimal("1000"),
-            price=Money.of("150.12", "JPY"),
-            metadata=Metadata.of(event_id="event-1"),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            bid=Money.of("150.10", "JPY"),
+            ask=Money.of("150.12", "JPY"),
         )
-    )
+        data_source = MemoryDataSource([tick])
+        strategy = HoldStrategy(
+            name="snowball",
+            parameters={"risk_percent": Decimal("1.5")},
+        )
+        context = StrategyContext(
+            task_id=task_id,
+            task_type=TaskType.BACKTEST,
+            instrument=USD_JPY,
+            metadata=Metadata.of(strategy_name="snowball"),
+        )
+        broker = MemoryBroker()
 
-    assert result.events[0].task_id == task_id
-    assert result.events[0].reason.code == StrategyDecisionCode.HOLD
-    assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
-    assert placed_order.status == OrderStatus.FILLED
-    assert broker.orders[0].metadata == Metadata.of(event_id="event-1")
+        loaded_ticks = tuple(data_source.ticks(instrument=USD_JPY))
+        result = strategy.on_tick(loaded_ticks[0], context)
+        placed_order = broker.place_order(
+            Order(
+                instrument=USD_JPY,
+                side=OrderSide.BUY,
+                units=Decimal("1000"),
+                price=Money.of("150.12", "JPY"),
+                metadata=Metadata.of(event_id="event-1"),
+            )
+        )
+
+        assert result.events[0].task_id == task_id
+        assert result.events[0].reason.code == StrategyDecisionCode.HOLD
+        assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
+        assert placed_order.status == OrderStatus.FILLED
+        assert broker.orders[0].metadata == Metadata.of(event_id="event-1")

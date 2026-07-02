@@ -22,16 +22,18 @@ from core import (
     TradingProvider,
 )
 
+PAPER_PROVIDER = AccountProvider.of("paper")
+
 
 class MemoryAccountManager(AccountManager):
     def __init__(self) -> None:
         self.closed = False
 
     def list_accounts(self) -> tuple[Account, ...]:
-        return (Account.of({"id": "001", "provider": AccountProvider.OANDA}),)
+        return (Account.of({"id": "001", "provider": PAPER_PROVIDER}),)
 
     def get_account(self, account_id: AccountId) -> Account:
-        return Account.of({"id": str(account_id), "provider": AccountProvider.OANDA})
+        return Account.of({"id": str(account_id), "provider": PAPER_PROVIDER})
 
     def get_account_summary(self, account_id: AccountId) -> AccountSummary:
         return AccountSummary.model_validate({"account_id": account_id, "currency": "USD"})
@@ -39,11 +41,9 @@ class MemoryAccountManager(AccountManager):
     def get_account_instruments(
         self,
         account_id: AccountId,
-        *,
-        instruments: tuple[CurrencyPair, ...] | None = None,
     ) -> tuple[CurrencyPair, ...]:
         _ = account_id
-        return instruments or (CurrencyPair.of("USD_JPY"),)
+        return (CurrencyPair.of("USD_JPY"),)
 
     def configure_account(
         self,
@@ -56,7 +56,7 @@ class MemoryAccountManager(AccountManager):
         return Account.of(
             {
                 "id": str(account_id),
-                "provider": AccountProvider.OANDA,
+                "provider": PAPER_PROVIDER,
                 "alias": alias,
             }
         )
@@ -124,25 +124,27 @@ class MemoryDataSource(DataSource):
         self.closed = True
 
 
-def test_trading_provider_bundles_provider_services() -> None:
-    account_manager = MemoryAccountManager()
-    broker = MemoryBroker()
-    data_source = MemoryDataSource()
+class TestProviders:
+    def test_trading_provider_bundles_provider_services(self) -> None:
+        account_manager = MemoryAccountManager()
+        broker = MemoryBroker()
+        data_source = MemoryDataSource()
 
-    provider = TradingProvider(
-        provider=AccountProvider.OANDA,
-        account_manager=account_manager,
-        broker=broker,
-        data_source=data_source,
-    )
+        provider = TradingProvider(
+            provider=PAPER_PROVIDER,
+            account_manager=account_manager,
+            broker=broker,
+            data=data_source,
+        )
 
-    assert provider.provider == AccountProvider.OANDA
-    assert provider.accounts is account_manager
-    assert provider.broker is broker
-    assert provider.data_source is data_source
+        assert provider.provider == PAPER_PROVIDER
+        assert provider.accounts is account_manager
+        assert provider.account_manager is account_manager
+        assert provider.broker is broker
+        assert provider.data is data_source
 
-    provider.close()
+        provider.close()
 
-    assert account_manager.closed
-    assert broker.closed
-    assert data_source.closed
+        assert account_manager.closed
+        assert broker.closed
+        assert data_source.closed

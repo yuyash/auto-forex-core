@@ -23,7 +23,7 @@ from core.brokers import (
     Trade,
     Transaction,
 )
-from core.clock import local_timezone, now
+from core.clock import Clock, ManualClock, SystemClock, local_timezone, now
 from core.events import (
     ErrorCategory,
     ErrorCode,
@@ -60,10 +60,13 @@ from core.sources import (
     CSVTickSchema,
     CSVTimestampFormat,
     DataSource,
+    DataSourceFilter,
+    FilteredDataSource,
     SpreadFilter,
     SpreadFilteredDataSource,
     Tick,
     TickGranularity,
+    TickGranularityFilter,
 )
 from core.strategies import (
     Strategy,
@@ -112,9 +115,11 @@ __all__ = [
     "CSVTimestampFormat",
     "Candle",
     "CandleGranularity",
+    "Clock",
     "Currency",
     "CurrencyPair",
     "DataSource",
+    "DataSourceFilter",
     "DomainModel",
     "ErrorCategory",
     "ErrorCode",
@@ -127,7 +132,9 @@ __all__ = [
     "EventType",
     "EventTypeMetadata",
     "ExecutableTask",
+    "FilteredDataSource",
     "LogLevel",
+    "ManualClock",
     "Metadata",
     "Money",
     "Order",
@@ -152,6 +159,7 @@ __all__ = [
     "StrategyParameters",
     "StrategyResult",
     "StrategyState",
+    "SystemClock",
     "TaskAction",
     "TaskDefinition",
     "TaskFailure",
@@ -162,6 +170,7 @@ __all__ = [
     "TaskType",
     "Tick",
     "TickGranularity",
+    "TickGranularityFilter",
     "Trade",
     "TradeSide",
     "TradingProvider",

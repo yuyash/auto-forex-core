@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from enum import StrEnum
 from logging import Logger
 from typing import Any, Self
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_serializer, model_validator
 
 from core.logging import get_logger
 from core.models.base import DomainModel
@@ -18,10 +17,50 @@ from core.models.money import Currency, Money
 _LOGGER: Logger = get_logger(__name__)
 
 
-class AccountProvider(StrEnum):
-    """Known account providers."""
+class AccountProvider(DomainModel):
+    """Provider identifier supplied by an adapter or runtime package."""
 
-    OANDA = "oanda"
+    value: str = Field(min_length=1, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+
+    @classmethod
+    def of(cls, value: AccountProvider | str) -> Self:
+        """Coerce a value to an account provider identifier."""
+        return cls.model_validate(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        if isinstance(data, AccountProvider):
+            return data
+        if isinstance(data, str):
+            return {"value": data.strip().lower()}
+        if isinstance(data, Mapping) and isinstance(data.get("value"), str):
+            normalized = dict(data)
+            normalized["value"] = normalized["value"].strip().lower()
+            return normalized
+        return data
+
+    @field_validator("value")
+    @classmethod
+    def _strip_value(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            _LOGGER.debug("Rejected blank account provider")
+            msg = "account provider must not be blank"
+            raise ValueError(msg)
+        if normalized != value:
+            _LOGGER.debug(
+                "Normalized account provider",
+                extra={"account_provider": normalized},
+            )
+        return normalized
+
+    @model_serializer
+    def _serialize(self) -> str:
+        return self.value
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class AccountId(DomainModel):
@@ -139,7 +178,7 @@ class AccountSummary(DomainModel):
         if currency is not None:
             for field_name in ("balance", "nav", "margin_used", "margin_available"):
                 if normalized.get(field_name) is not None:
-                    normalized[field_name] = cls._money_with_currency(
+                    normalized[field_name] = Money.coerce(
                         normalized[field_name],
                         currency,
                     )
@@ -147,11 +186,3 @@ class AccountSummary(DomainModel):
             if isinstance(normalized.get(key), str):
                 normalized[key] = normalized[key].strip()
         return normalized
-
-    @staticmethod
-    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
-        if isinstance(value, Money):
-            return value.require_currency(currency)
-        if isinstance(value, Mapping):
-            return Money.model_validate(value).require_currency(currency)
-        return Money.of(value, currency)

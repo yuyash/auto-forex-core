@@ -8,7 +8,7 @@ from typing import Self
 
 from pydantic import AwareDatetime, Field
 
-from core.clock import now
+from core.clock import Clock, now
 from core.events.errors import ErrorCategory, ErrorCode, ErrorDetails
 from core.models.base import DomainModel
 
@@ -42,6 +42,7 @@ class TaskFailure(DomainModel):
         where: str = "",
         details: ErrorDetails | None = None,
         occurred_at: datetime | None = None,
+        clock: Clock | None = None,
     ) -> Self:
         """Create a failure from a plain message and optional context."""
         return cls(
@@ -50,7 +51,7 @@ class TaskFailure(DomainModel):
             category=category,
             where=where,
             details=details or ErrorDetails(),
-            occurred_at=occurred_at or now(),
+            occurred_at=occurred_at or now(clock),
         )
 
     @classmethod
@@ -63,6 +64,7 @@ class TaskFailure(DomainModel):
         where: str = "",
         details: ErrorDetails | None = None,
         occurred_at: datetime | None = None,
+        clock: Clock | None = None,
     ) -> Self:
         """Create a failure that captures an exception's type and traceback."""
         message = str(exc) or exc.__class__.__name__
@@ -74,7 +76,7 @@ class TaskFailure(DomainModel):
             cause_type=exc.__class__.__name__,
             traceback="".join(traceback.format_exception(exc)),
             details=details or ErrorDetails(),
-            occurred_at=occurred_at or now(),
+            occurred_at=occurred_at or now(clock),
         )
 
     def __str__(self) -> str:

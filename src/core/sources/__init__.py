@@ -1,6 +1,6 @@
 """Data source abstraction, market data models, and concrete sources."""
 
-from core.sources.base import DataSource
+from core.sources.base import DataSource, DataSourceFilter, TickGranularityFilter
 from core.sources.csv import (
     CSVCandleSchema,
     CSVDataSource,
@@ -8,7 +8,7 @@ from core.sources.csv import (
     CSVTickSchema,
     CSVTimestampFormat,
 )
-from core.sources.filters import SpreadFilter, SpreadFilteredDataSource
+from core.sources.filters import FilteredDataSource, SpreadFilter, SpreadFilteredDataSource
 from core.sources.models import Candle, CandleGranularity, Tick, TickGranularity
 
 __all__ = [
@@ -20,8 +20,11 @@ __all__ = [
     "Candle",
     "CandleGranularity",
     "DataSource",
+    "DataSourceFilter",
+    "FilteredDataSource",
     "SpreadFilter",
     "SpreadFilteredDataSource",
     "Tick",
     "TickGranularity",
+    "TickGranularityFilter",
 ]

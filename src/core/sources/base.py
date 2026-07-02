@@ -1,22 +1,60 @@
-"""Market data source abstraction.
-
-This is the abstract base for all data sources. Concrete implementations
-(``CSVDataSource``, ``SpreadFilteredDataSource``) live alongside it in this
-package; infrastructure adapters such as OANDA implement it from their own
-packages.
-"""
+"""Market data source abstraction."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from datetime import datetime
+from typing import Protocol
 
 from core.logging import get_logger
 from core.models import CurrencyPair
+from core.models.base import DomainModel
 from core.sources.models import Candle, Tick, TickGranularity
 
 _LOGGER = get_logger(__name__)
+
+
+class DataSourceFilter(Protocol):
+    """Composable filter for data source streams."""
+
+    def filter_ticks(self, ticks: Iterable[Tick]) -> Iterable[Tick]:
+        """Return a filtered tick stream."""
+        ...
+
+    def filter_candles(self, candles: Iterable[Candle]) -> Iterable[Candle]:
+        """Return a filtered candle stream."""
+        ...
+
+
+class TickGranularityFilter(DomainModel):
+    """Tick filter that emits one tick per requested granularity bucket."""
+
+    granularity: TickGranularity = TickGranularity.TICK
+
+    @classmethod
+    def of(cls, granularity: TickGranularity) -> TickGranularityFilter:
+        """Create a granularity filter from a tick granularity value."""
+        return cls(granularity=TickGranularity(granularity))
+
+    def filter_ticks(self, ticks: Iterable[Tick]) -> Iterable[Tick]:
+        """Downsample ticks to one per interval bucket."""
+        interval = self.granularity.interval
+        if interval is None:
+            yield from ticks
+            return
+        interval_seconds = interval.total_seconds()
+        current_bucket: int | None = None
+        for tick in ticks:
+            bucket = int(tick.timestamp.timestamp() // interval_seconds)
+            if bucket != current_bucket:
+                current_bucket = bucket
+                yield tick
+
+    def filter_candles(self, candles: Iterable[Candle]) -> Iterable[Candle]:
+        """Leave candles unchanged."""
+        _ = self
+        return candles
 
 
 class DataSource(ABC):
@@ -51,7 +89,13 @@ class DataSource(ABC):
         the first tick of each fixed interval bucket is yielded.
         """
         raw = self._raw_ticks(instrument=instrument, start_at=start_at, end_at=end_at)
-        return self._sample_ticks(raw, granularity=granularity)
+        return self._apply_tick_filters(raw, filters=self._tick_filters(granularity=granularity))
+
+    def with_filters(self, *filters: DataSourceFilter) -> DataSource:
+        """Return a data source decorator that applies additional filters."""
+        from core.sources.filters import FilteredDataSource
+
+        return FilteredDataSource(self, filters=filters)
 
     def prices(
         self,
@@ -108,6 +152,21 @@ class DataSource(ABC):
         """Release resources held by the data source."""
         return None
 
+    def _tick_filters(self, *, granularity: TickGranularity) -> tuple[DataSourceFilter, ...]:
+        """Return filters applied by :meth:`ticks` in execution order."""
+        return (TickGranularityFilter.of(granularity),)
+
+    @staticmethod
+    def _apply_tick_filters(
+        ticks: Iterable[Tick],
+        *,
+        filters: Iterable[DataSourceFilter],
+    ) -> Iterable[Tick]:
+        filtered = ticks
+        for data_filter in filters:
+            filtered = data_filter.filter_ticks(filtered)
+        return filtered
+
     @staticmethod
     def _sample_ticks(
         ticks: Iterable[Tick],
@@ -115,14 +174,4 @@ class DataSource(ABC):
         granularity: TickGranularity,
     ) -> Iterator[Tick]:
         """Downsample ticks to one per interval bucket (passthrough for TICK)."""
-        interval = granularity.interval
-        if interval is None:
-            yield from ticks
-            return
-        interval_seconds = interval.total_seconds()
-        current_bucket: int | None = None
-        for tick in ticks:
-            bucket = int(tick.timestamp.timestamp() // interval_seconds)
-            if bucket != current_bucket:
-                current_bucket = bucket
-                yield tick
+        yield from TickGranularityFilter.of(granularity).filter_ticks(ticks)

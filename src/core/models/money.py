@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 from functools import total_ordering
 from logging import Logger
@@ -158,6 +159,19 @@ class Money(DomainModel):
         if isinstance(amount, Money):
             return amount.require_currency(currency)
         return cls(amount=Decimal(str(amount)), currency=Currency.of(currency))
+
+    @classmethod
+    def coerce(
+        cls,
+        value: Money | Mapping[str, Any] | Decimal | int | str,
+        currency: Currency | str,
+    ) -> Money:
+        """Coerce a raw amount, mapping, or Money into the requested currency."""
+        if isinstance(value, Money):
+            return value.require_currency(currency)
+        if isinstance(value, Mapping):
+            return cls.model_validate(value).require_currency(currency)
+        return cls.of(value, currency)
 
     def require_currency(self, currency: Currency | str) -> Self:
         """Return self when currencies match, otherwise raise ValueError."""

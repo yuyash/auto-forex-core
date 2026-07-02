@@ -82,7 +82,7 @@ class StrategyEvent(Event):
         instrument = CurrencyPair.of(data["instrument"])
         normalized = dict(data)
         normalized["instrument"] = instrument
-        normalized["price"] = Money.of(data["price"], instrument.quote).require_positive()
+        normalized["price"] = Money.coerce(data["price"], instrument.quote).require_positive()
         return normalized
 
     @model_validator(mode="after")

@@ -1,7 +1,7 @@
 [project]
 name = "auto-forex-core"
 version = "0.1.0"
-description = "Core package for AutoForex app."
+description = "A Python package for automating forex trading strategies."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -35,7 +35,12 @@ line-ending = "lf"
 quote-style = "double"
 
 [tool.pytest.ini_options]
-addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "--import-mode=importlib",
+]
 testpaths = ["tests"]
 
 [tool.ty.environment]

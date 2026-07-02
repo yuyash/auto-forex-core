@@ -1,4 +1,4 @@
-"""Strategy abstraction for AutoForex algorithms."""
+"""Strategy abstraction for auto trading algorithms."""
 
 from __future__ import annotations
 

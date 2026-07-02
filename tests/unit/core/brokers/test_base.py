@@ -50,16 +50,17 @@ class MemoryBroker(Broker):
         return ()
 
 
-def test_broker_port_can_be_implemented() -> None:
-    broker = MemoryBroker()
-    order = Order(
-        instrument=CurrencyPair.of("USD_JPY"),
-        side=OrderSide.BUY,
-        units=Decimal("1000"),
-        price=Money.of("150.12", "JPY"),
-    )
+class TestBase:
+    def test_broker_port_can_be_implemented(self) -> None:
+        broker = MemoryBroker()
+        order = Order(
+            instrument=CurrencyPair.of("USD_JPY"),
+            side=OrderSide.BUY,
+            units=Decimal("1000"),
+            price=Money.of("150.12", "JPY"),
+        )
 
-    result = broker.place_order(order)
+        result = broker.place_order(order)
 
-    assert result.status == OrderStatus.FILLED
-    assert broker.orders == [order]
+        assert result.status == OrderStatus.FILLED
+        assert broker.orders == [order]

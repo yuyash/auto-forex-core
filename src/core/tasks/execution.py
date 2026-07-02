@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field
 
-from core.clock import now
+from core.clock import Clock, now
 from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
@@ -84,9 +84,14 @@ class ExecutableTask(DomainModel):
         return self.failure.message if self.failure is not None else ""
 
     @classmethod
-    def from_definition(cls, definition: TaskDefinition) -> ExecutableTask:
+    def from_definition(
+        cls,
+        definition: TaskDefinition,
+        *,
+        clock: Clock | None = None,
+    ) -> ExecutableTask:
         """Create a new executable task from a task definition."""
-        task = cls(definition=definition)
+        task = cls(definition=definition, created_at=now(clock))
         _LOGGER.debug(
             "Created executable task %s",
             task.id,
@@ -146,9 +151,9 @@ class ExecutableTask(DomainModel):
         )
         return allowed
 
-    def start(self, *, at: datetime | None = None) -> Self:
+    def start(self, *, at: datetime | None = None, clock: Clock | None = None) -> Self:
         """Start a new task run or resume a paused task."""
-        timestamp = at or now()
+        timestamp = at or now(clock)
         is_resume = self.status == TaskStatus.PAUSED
         _LOGGER.debug(
             "Starting executable task %s",
@@ -171,9 +176,9 @@ class ExecutableTask(DomainModel):
         self._log_transition(TaskAction.START, task)
         return task
 
-    def pause(self, *, at: datetime | None = None) -> Self:
+    def pause(self, *, at: datetime | None = None, clock: Clock | None = None) -> Self:
         """Pause a running task without discarding its runtime state."""
-        timestamp = at or now()
+        timestamp = at or now(clock)
         _LOGGER.debug(
             "Pausing executable task %s",
             self.id,
@@ -189,9 +194,9 @@ class ExecutableTask(DomainModel):
         self._log_transition(TaskAction.PAUSE, task)
         return task
 
-    def stop(self, *, at: datetime | None = None) -> Self:
+    def stop(self, *, at: datetime | None = None, clock: Clock | None = None) -> Self:
         """Stop a running or paused task."""
-        timestamp = at or now()
+        timestamp = at or now(clock)
         _LOGGER.debug(
             "Stopping executable task %s",
             self.id,
@@ -208,9 +213,9 @@ class ExecutableTask(DomainModel):
         self._log_transition(TaskAction.STOP, task)
         return task
 
-    def restart(self, *, at: datetime | None = None) -> Self:
+    def restart(self, *, at: datetime | None = None, clock: Clock | None = None) -> Self:
         """Start the task again as a fresh run."""
-        timestamp = at or now()
+        timestamp = at or now(clock)
         _LOGGER.debug(
             "Restarting executable task %s",
             self.id,
@@ -231,9 +236,9 @@ class ExecutableTask(DomainModel):
         self._log_transition(TaskAction.RESTART, task)
         return task
 
-    def complete(self, *, at: datetime | None = None) -> Self:
+    def complete(self, *, at: datetime | None = None, clock: Clock | None = None) -> Self:
         """Mark a running task as completed."""
-        timestamp = at or now()
+        timestamp = at or now(clock)
         _LOGGER.debug(
             "Completing executable task %s",
             self.id,
@@ -255,14 +260,15 @@ class ExecutableTask(DomainModel):
         reason: str | TaskFailure | BaseException,
         *,
         at: datetime | None = None,
+        clock: Clock | None = None,
     ) -> Self:
         """Mark the task as failed.
 
         ``reason`` may be a plain message, a prebuilt :class:`TaskFailure`, or an
         exception (whose type and traceback are captured).
         """
-        failure = self._coerce_failure(reason)
-        timestamp = at or now()
+        timestamp = at or now(clock)
+        failure = self._coerce_failure(reason, occurred_at=timestamp)
         _LOGGER.debug(
             "Failing executable task %s",
             self.id,
@@ -282,12 +288,16 @@ class ExecutableTask(DomainModel):
         return task
 
     @staticmethod
-    def _coerce_failure(reason: str | TaskFailure | BaseException) -> TaskFailure:
+    def _coerce_failure(
+        reason: str | TaskFailure | BaseException,
+        *,
+        occurred_at: datetime,
+    ) -> TaskFailure:
         if isinstance(reason, TaskFailure):
             return reason
         if isinstance(reason, BaseException):
-            return TaskFailure.from_exception(reason)
-        return TaskFailure.of(reason)
+            return TaskFailure.from_exception(reason, occurred_at=occurred_at)
+        return TaskFailure.of(reason, occurred_at=occurred_at)
 
     def _next_status(self, action: TaskAction) -> TaskStatus:
         _LOGGER.debug(

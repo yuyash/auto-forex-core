@@ -12,7 +12,7 @@ from pydantic import Field, model_validator
 from core.logging import get_logger
 from core.models import CurrencyPair
 from core.models.base import DomainModel
-from core.sources.base import DataSource
+from core.sources.base import DataSource, DataSourceFilter
 from core.sources.models import Candle, Tick, TickGranularity
 
 _LOGGER: Logger = get_logger(__name__)
@@ -71,6 +71,107 @@ class SpreadFilter(DomainModel):
         """Return a tick's bid/ask spread in instrument pips."""
         return tick.spread.amount / tick.instrument.pip_size
 
+    def filter_ticks(self, ticks: Iterable[Tick]) -> Iterable[Tick]:
+        """Yield ticks allowed by the spread threshold."""
+        yielded_count = 0
+        skipped_count = 0
+        for tick in ticks:
+            if self.allows(tick):
+                yielded_count += 1
+                yield tick
+                continue
+            skipped_count += 1
+            _LOGGER.debug(
+                "Skipped tick because spread exceeded filter threshold",
+                extra={
+                    "instrument": str(tick.instrument),
+                    "timestamp": tick.timestamp.isoformat(),
+                    "spread_pips": str(self.spread_pips(tick)),
+                    "max_spread_pips": str(self.max_spread_pips or ""),
+                    "skipped_count": skipped_count,
+                },
+            )
+        _LOGGER.debug(
+            "Finished applying spread filter",
+            extra={
+                "spread_filter_enabled": self.enabled,
+                "max_spread_pips": str(self.max_spread_pips or ""),
+                "yielded_count": yielded_count,
+                "skipped_count": skipped_count,
+            },
+        )
+
+    def filter_candles(self, candles: Iterable[Candle]) -> Iterable[Candle]:
+        """Leave candles unchanged because bid/ask spread is tick-level data."""
+        _ = self
+        return candles
+
+
+class FilteredDataSource(DataSource):
+    """Data source decorator that applies composable filters."""
+
+    def __init__(
+        self,
+        source: DataSource,
+        *,
+        filters: Iterable[DataSourceFilter],
+    ) -> None:
+        self._source = source
+        self._filters = tuple(filters)
+
+    @property
+    def source(self) -> DataSource:
+        """Return the wrapped data source."""
+        return self._source
+
+    @property
+    def filters(self) -> tuple[DataSourceFilter, ...]:
+        """Return configured filters in execution order."""
+        return self._filters
+
+    def _raw_ticks(
+        self,
+        *,
+        instrument: CurrencyPair,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> Iterable[Tick]:
+        """Yield full-resolution ticks from the wrapped source."""
+        return self._source.ticks(
+            instrument=instrument,
+            granularity=TickGranularity.TICK,
+            start_at=start_at,
+            end_at=end_at,
+        )
+
+    def _tick_filters(self, *, granularity: TickGranularity) -> tuple[DataSourceFilter, ...]:
+        """Apply custom filters before the requested granularity filter."""
+        return (*self._filters, *super()._tick_filters(granularity=granularity))
+
+    def candles(
+        self,
+        *,
+        instrument: CurrencyPair,
+        granularity: str,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> Iterable[Candle]:
+        """Yield candles from the wrapped source after applying candle filters."""
+        candles = self._source.candles(
+            instrument=instrument,
+            granularity=granularity,
+            start_at=start_at,
+            end_at=end_at,
+        )
+        filtered = candles
+        for data_filter in self._filters:
+            filtered = data_filter.filter_candles(filtered)
+        return filtered
+
+    def close(self) -> None:
+        """Close the wrapped data source."""
+        self._source.close()
+
 
 class SpreadFilteredDataSource(DataSource):
     """Data source decorator that filters ticks by bid/ask spread."""
@@ -86,11 +187,16 @@ class SpreadFilteredDataSource(DataSource):
         if spread_filter is not None and max_spread_pips is not None:
             msg = "provide either spread_filter or max_spread_pips, not both"
             raise ValueError(msg)
-        self.source = source
         self.spread_filter = spread_filter or SpreadFilter(
             enabled=enabled,
             max_spread_pips=self._optional_decimal(max_spread_pips),
         )
+        self._filtered_source = FilteredDataSource(source, filters=(self.spread_filter,))
+
+    @property
+    def source(self) -> DataSource:
+        """Return the wrapped data source."""
+        return self._filtered_source.source
 
     def _raw_ticks(
         self,
@@ -99,50 +205,12 @@ class SpreadFilteredDataSource(DataSource):
         start_at: datetime | None = None,
         end_at: datetime | None = None,
     ) -> Iterable[Tick]:
-        """Yield raw ticks from the wrapped source after applying the spread filter.
-
-        Sampling granularity is applied by the base ``ticks`` method on top of
-        these filtered ticks, so the wrapped source is read at full resolution.
-        """
-        requested_instrument = CurrencyPair.of(instrument)
-        _LOGGER.info(
-            "Loading spread-filtered ticks",
-            extra={
-                "instrument": str(requested_instrument),
-                "spread_filter_enabled": self.spread_filter.enabled,
-                "max_spread_pips": str(self.spread_filter.max_spread_pips or ""),
-            },
-        )
-        yielded_count = 0
-        skipped_count = 0
-        for tick in self.source.ticks(
-            instrument=requested_instrument,
+        """Yield raw spread-filtered ticks from the wrapped source."""
+        return self._filtered_source.ticks(
+            instrument=instrument,
             granularity=TickGranularity.TICK,
             start_at=start_at,
             end_at=end_at,
-        ):
-            if self.spread_filter.allows(tick):
-                yielded_count += 1
-                yield tick
-                continue
-            skipped_count += 1
-            _LOGGER.debug(
-                "Skipped tick because spread exceeded filter threshold",
-                extra={
-                    "instrument": str(tick.instrument),
-                    "timestamp": tick.timestamp.isoformat(),
-                    "spread_pips": str(self.spread_filter.spread_pips(tick)),
-                    "max_spread_pips": str(self.spread_filter.max_spread_pips or ""),
-                    "skipped_count": skipped_count,
-                },
-            )
-        _LOGGER.info(
-            "Finished loading spread-filtered ticks",
-            extra={
-                "instrument": str(requested_instrument),
-                "yielded_count": yielded_count,
-                "skipped_count": skipped_count,
-            },
         )
 
     def candles(
@@ -154,7 +222,7 @@ class SpreadFilteredDataSource(DataSource):
         end_at: datetime | None = None,
     ) -> Iterable[Candle]:
         """Delegate candles unchanged because bid/ask spread is tick-level data."""
-        return self.source.candles(
+        return self._filtered_source.candles(
             instrument=instrument,
             granularity=granularity,
             start_at=start_at,
@@ -163,7 +231,7 @@ class SpreadFilteredDataSource(DataSource):
 
     def close(self) -> None:
         """Close the wrapped data source."""
-        self.source.close()
+        self._filtered_source.close()
 
     @staticmethod
     def _optional_decimal(value: Decimal | int | str | None) -> Decimal | None:

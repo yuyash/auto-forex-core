@@ -1,24 +1,60 @@
-"""Clock helpers for AutoForex timestamps.
+"""Clock helpers for core library and standalone scripts.
 
-AutoForex stamps two kinds of times: record-keeping times (when something
-happened on this machine, e.g. ``created_at`` or an event timestamp) and market
-data times (when a quote or candle occurred at the venue). Both are stored as
-timezone-aware datetimes; the default zone is the system local zone rather than
-UTC, because local time is friendlier for interactive and operational use and
-aware datetimes compare and serialize unambiguously regardless of zone.
-
-Use :func:`now` instead of ``datetime.now(UTC)`` and :func:`local_timezone`
-instead of a hard-coded ``UTC`` when a naive timestamp must be made aware.
+Live runtimes use the system local clock by default; replay and backtest
+runtimes can inject a manual clock so lifecycle timestamps follow historical
+market time instead of wall-clock time.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, tzinfo
+from typing import Protocol
 
 
-def now() -> datetime:
-    """Return the current time as a timezone-aware local datetime."""
-    return datetime.now().astimezone()
+class Clock(Protocol):
+    """Source of timezone-aware datetimes for domain timestamps."""
+
+    def now(self) -> datetime:
+        """Return the current time for this clock."""
+
+
+@dataclass(frozen=True, slots=True)
+class SystemClock:
+    """Clock backed by the system local timezone."""
+
+    def now(self) -> datetime:
+        """Return the current wall-clock time as a timezone-aware datetime."""
+        return datetime.now().astimezone()
+
+
+@dataclass(slots=True)
+class ManualClock:
+    """Clock whose current time is controlled by the caller."""
+
+    current: datetime
+
+    def __post_init__(self) -> None:
+        self.set(self.current)
+
+    def now(self) -> datetime:
+        """Return the configured current time."""
+        return self.current
+
+    def set(self, current: datetime) -> None:
+        """Move the clock to ``current``."""
+        if current.tzinfo is None or current.utcoffset() is None:
+            msg = "manual clock time must be timezone-aware"
+            raise ValueError(msg)
+        self.current = current
+
+
+SYSTEM_CLOCK = SystemClock()
+
+
+def now(clock: Clock | None = None) -> datetime:
+    """Return the current time from ``clock`` or the system clock."""
+    return (clock or SYSTEM_CLOCK).now()
 
 
 def local_timezone() -> tzinfo:

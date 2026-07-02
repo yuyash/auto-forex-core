@@ -26,12 +26,7 @@ class AccountManager(ABC):
         """Return one account summary."""
 
     @abstractmethod
-    def get_account_instruments(
-        self,
-        account_id: AccountId,
-        *,
-        instruments: tuple[CurrencyPair, ...] | None = None,
-    ) -> tuple[CurrencyPair, ...]:
+    def get_account_instruments(self, account_id: AccountId) -> tuple[CurrencyPair, ...]:
         """Return tradable instruments for an account."""
 
     @abstractmethod

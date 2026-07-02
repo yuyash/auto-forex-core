@@ -116,142 +116,136 @@ class HoldStrategy(Strategy):
         )
 
 
-def test_forex_quotes_data_source_generates_ticks() -> None:
-    source = ForexQuotesExampleDataSource()
+class TestForexQuotesTaskFlow:
+    def test_forex_quotes_data_source_generates_ticks(self) -> None:
+        source = ForexQuotesExampleDataSource()
 
-    ticks = tuple(source.ticks(instrument=EUR_USD))
+        ticks = tuple(source.ticks(instrument=EUR_USD))
 
-    assert len(ticks) == 99
-    assert ticks[0].timestamp == datetime(2023, 3, 28, tzinfo=UTC)
-    assert ticks[0].metadata == Metadata.of(ask_exchange="48", bid_exchange="48")
+        assert len(ticks) == 99
+        assert ticks[0].timestamp == datetime(2023, 3, 28, tzinfo=UTC)
+        assert ticks[0].metadata == Metadata.of(ask_exchange="48", bid_exchange="48")
 
+    def test_forex_minute_aggs_data_source_generates_candles(self) -> None:
+        source = ForexMinuteAggsExampleDataSource()
 
-def test_forex_minute_aggs_data_source_generates_candles() -> None:
-    source = ForexMinuteAggsExampleDataSource()
+        candles = tuple(source.candles(instrument=EUR_USD, granularity="M1"))
 
-    candles = tuple(source.candles(instrument=EUR_USD, granularity="M1"))
+        assert len(candles) == 99
+        assert candles[0].timestamp == datetime(2023, 3, 28, tzinfo=UTC)
+        assert candles[0].volume == 120
+        assert candles[0].metadata == Metadata.of(transactions="120")
 
-    assert len(candles) == 99
-    assert candles[0].timestamp == datetime(2023, 3, 28, tzinfo=UTC)
-    assert candles[0].volume == 120
-    assert candles[0].metadata == Metadata.of(transactions="120")
+    def test_backtest_task_processes_forex_quote_ticks_end_to_end(self) -> None:
+        definition = BacktestTaskDefinition(
+            name="Backtest EUR_USD sample quotes",
+            instrument=EUR_USD,
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
+            start_at=datetime(2023, 3, 28, tzinfo=UTC),
+            end_at=datetime(2023, 3, 29, tzinfo=UTC),
+        )
 
+        completed, events = _run_ticks_through_task(definition.task_type, definition)
 
-def test_backtest_task_processes_forex_quote_ticks_end_to_end() -> None:
-    definition = BacktestTaskDefinition(
-        name="Backtest EUR_USD sample quotes",
-        instrument=EUR_USD,
-        parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
-        start_at=datetime(2023, 3, 28, tzinfo=UTC),
-        end_at=datetime(2023, 3, 29, tzinfo=UTC),
-    )
+        assert completed.status == TaskStatus.COMPLETED
+        assert len(events) == 99
+        assert all(event.task_id == completed.id for event in events)
+        assert {event.action for event in events} == {StrategyAction.HOLD}
 
-    completed, events = _run_ticks_through_task(definition.task_type, definition)
+    def test_trading_task_processes_forex_quote_ticks_end_to_end(self) -> None:
+        definition = TradingTaskDefinition(
+            name="Trading EUR_USD sample quotes",
+            instrument=EUR_USD,
+            account=Account.of("test-account"),
+            dry_run=True,
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
+        )
 
-    assert completed.status == TaskStatus.COMPLETED
-    assert len(events) == 99
-    assert all(event.task_id == completed.id for event in events)
-    assert {event.action for event in events} == {StrategyAction.HOLD}
+        stopped, events = _run_ticks_through_task(definition.task_type, definition, limit=10)
 
+        assert stopped.status == TaskStatus.STOPPED
+        assert len(events) == 10
+        assert all(event.task_id == stopped.id for event in events)
+        assert all(event.reason.rule_id == "forex_quotes.hold" for event in events)
 
-def test_trading_task_processes_forex_quote_ticks_end_to_end() -> None:
-    definition = TradingTaskDefinition(
-        name="Trading EUR_USD sample quotes",
-        instrument=EUR_USD,
-        account=Account.of("test-account"),
-        dry_run=True,
-        parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
-    )
+    def test_backtest_task_processes_gzip_forex_quote_ticks_end_to_end(self) -> None:
+        definition = BacktestTaskDefinition(
+            name="Backtest AED_AUD compressed sample quotes",
+            instrument=AED_AUD,
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
+            start_at=datetime(2026, 6, 26, tzinfo=UTC),
+            end_at=datetime(2026, 6, 27, tzinfo=UTC),
+        )
 
-    stopped, events = _run_ticks_through_task(definition.task_type, definition, limit=10)
+        completed, events = _run_ticks_through_task(
+            definition.task_type,
+            definition,
+            source=GzipForexQuotesExampleDataSource(),
+            limit=2,
+        )
 
-    assert stopped.status == TaskStatus.STOPPED
-    assert len(events) == 10
-    assert all(event.task_id == stopped.id for event in events)
-    assert all(event.reason.rule_id == "forex_quotes.hold" for event in events)
+        assert completed.status == TaskStatus.COMPLETED
+        assert len(events) == 2
+        assert all(event.instrument == AED_AUD for event in events)
 
+    def test_trading_task_processes_gzip_forex_quote_ticks_end_to_end(self) -> None:
+        definition = TradingTaskDefinition(
+            name="Trading AED_AUD compressed sample quotes",
+            instrument=AED_AUD,
+            account=Account.of("test-account"),
+            dry_run=True,
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
+        )
 
-def test_backtest_task_processes_gzip_forex_quote_ticks_end_to_end() -> None:
-    definition = BacktestTaskDefinition(
-        name="Backtest AED_AUD compressed sample quotes",
-        instrument=AED_AUD,
-        parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
-        start_at=datetime(2026, 6, 26, tzinfo=UTC),
-        end_at=datetime(2026, 6, 27, tzinfo=UTC),
-    )
+        stopped, events = _run_ticks_through_task(
+            definition.task_type,
+            definition,
+            source=GzipForexQuotesExampleDataSource(),
+            limit=2,
+        )
 
-    completed, events = _run_ticks_through_task(
-        definition.task_type,
-        definition,
-        source=GzipForexQuotesExampleDataSource(),
-        limit=2,
-    )
+        assert stopped.status == TaskStatus.STOPPED
+        assert len(events) == 2
+        assert all(event.task_id == stopped.id for event in events)
 
-    assert completed.status == TaskStatus.COMPLETED
-    assert len(events) == 2
-    assert all(event.instrument == AED_AUD for event in events)
+    def test_backtest_task_processes_forex_minute_aggs_candles_end_to_end(self) -> None:
+        definition = BacktestTaskDefinition(
+            name="Backtest EUR_USD sample minute aggs",
+            instrument=EUR_USD,
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
+            start_at=datetime(2023, 3, 28, tzinfo=UTC),
+            end_at=datetime(2023, 3, 29, tzinfo=UTC),
+        )
 
+        completed, events = _run_candles_through_task(
+            definition.task_type,
+            definition,
+            source=ForexMinuteAggsExampleDataSource(),
+        )
 
-def test_trading_task_processes_gzip_forex_quote_ticks_end_to_end() -> None:
-    definition = TradingTaskDefinition(
-        name="Trading AED_AUD compressed sample quotes",
-        instrument=AED_AUD,
-        account=Account.of("test-account"),
-        dry_run=True,
-        parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
-    )
+        assert completed.status == TaskStatus.COMPLETED
+        assert len(events) == 99
+        assert all(event.reason.rule_id == "forex_minute_aggs.hold" for event in events)
 
-    stopped, events = _run_ticks_through_task(
-        definition.task_type,
-        definition,
-        source=GzipForexQuotesExampleDataSource(),
-        limit=2,
-    )
+    def test_trading_task_processes_gzip_forex_minute_aggs_candles_end_to_end(self) -> None:
+        definition = TradingTaskDefinition(
+            name="Trading AED_AUD compressed minute aggs",
+            instrument=AED_AUD,
+            account=Account.of("test-account"),
+            dry_run=True,
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
+        )
 
-    assert stopped.status == TaskStatus.STOPPED
-    assert len(events) == 2
-    assert all(event.task_id == stopped.id for event in events)
+        stopped, events = _run_candles_through_task(
+            definition.task_type,
+            definition,
+            source=GzipForexMinuteAggsExampleDataSource(),
+            limit=2,
+        )
 
-
-def test_backtest_task_processes_forex_minute_aggs_candles_end_to_end() -> None:
-    definition = BacktestTaskDefinition(
-        name="Backtest EUR_USD sample minute aggs",
-        instrument=EUR_USD,
-        parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
-        start_at=datetime(2023, 3, 28, tzinfo=UTC),
-        end_at=datetime(2023, 3, 29, tzinfo=UTC),
-    )
-
-    completed, events = _run_candles_through_task(
-        definition.task_type,
-        definition,
-        source=ForexMinuteAggsExampleDataSource(),
-    )
-
-    assert completed.status == TaskStatus.COMPLETED
-    assert len(events) == 99
-    assert all(event.reason.rule_id == "forex_minute_aggs.hold" for event in events)
-
-
-def test_trading_task_processes_gzip_forex_minute_aggs_candles_end_to_end() -> None:
-    definition = TradingTaskDefinition(
-        name="Trading AED_AUD compressed minute aggs",
-        instrument=AED_AUD,
-        account=Account.of("test-account"),
-        dry_run=True,
-        parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
-    )
-
-    stopped, events = _run_candles_through_task(
-        definition.task_type,
-        definition,
-        source=GzipForexMinuteAggsExampleDataSource(),
-        limit=2,
-    )
-
-    assert stopped.status == TaskStatus.STOPPED
-    assert len(events) == 2
-    assert all(event.instrument == AED_AUD for event in events)
+        assert stopped.status == TaskStatus.STOPPED
+        assert len(events) == 2
+        assert all(event.instrument == AED_AUD for event in events)
 
 
 def _run_ticks_through_task(

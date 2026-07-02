@@ -262,12 +262,12 @@ class Order(DomainModel):
         normalized = dict(data)
         normalized["instrument"] = instrument
         if data.get("price") is not None:
-            normalized["price"] = cls._money_with_currency(
+            normalized["price"] = Money.coerce(
                 data["price"],
                 instrument.quote,
             ).require_positive()
         if data.get("average_fill_price") is not None:
-            normalized["average_fill_price"] = cls._money_with_currency(
+            normalized["average_fill_price"] = Money.coerce(
                 data["average_fill_price"],
                 instrument.quote,
             ).require_positive()
@@ -298,14 +298,6 @@ class Order(DomainModel):
     def remaining_units(self) -> Decimal:
         """Return unfilled units."""
         return self.units - self.filled_units
-
-    @staticmethod
-    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
-        if isinstance(value, Money):
-            return value.require_currency(currency)
-        if isinstance(value, dict):
-            return Money.model_validate(value).require_currency(currency)
-        return Money.of(value, currency)
 
 
 class PositionSideState(DomainModel):
@@ -429,7 +421,7 @@ class Position(DomainModel):
         normalized = dict(value)
         normalized.setdefault("side", side)
         if normalized.get("average_entry_price") is not None:
-            normalized["average_entry_price"] = cls._money_with_currency(
+            normalized["average_entry_price"] = Money.coerce(
                 normalized["average_entry_price"],
                 quote_currency,
             ).require_positive()
@@ -440,19 +432,11 @@ class Position(DomainModel):
             if isinstance(normalized["unrealized_pl"], dict):
                 normalized["unrealized_pl"] = Money.model_validate(normalized["unrealized_pl"])
             else:
-                normalized["unrealized_pl"] = Money.of(
+                normalized["unrealized_pl"] = Money.coerce(
                     normalized["unrealized_pl"],
                     quote_currency,
                 )
         return normalized
-
-    @staticmethod
-    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
-        if isinstance(value, Money):
-            return value.require_currency(currency)
-        if isinstance(value, dict):
-            return Money.model_validate(value).require_currency(currency)
-        return Money.of(value, currency)
 
 
 class Trade(DomainModel):
@@ -480,27 +464,19 @@ class Trade(DomainModel):
         normalized = dict(data)
         normalized["instrument"] = instrument
         if normalized.get("price") is not None:
-            normalized["price"] = cls._money_with_currency(normalized["price"], instrument.quote)
+            normalized["price"] = Money.coerce(normalized["price"], instrument.quote)
         for field_name in ("realized_pl", "unrealized_pl"):
             if normalized.get(field_name) is not None and not isinstance(
                 normalized[field_name],
                 Money,
             ):
-                normalized[field_name] = cls._money_with_currency(
+                normalized[field_name] = Money.coerce(
                     normalized[field_name],
                     instrument.quote,
                 )
         if normalized.get("state") is not None:
             normalized["state"] = str(normalized["state"]).strip().lower()
         return normalized
-
-    @staticmethod
-    def _money_with_currency(value: Any, currency: Currency | str) -> Money:
-        if isinstance(value, Money):
-            return value.require_currency(currency)
-        if isinstance(value, dict):
-            return Money.model_validate(value).require_currency(currency)
-        return Money.of(value, currency)
 
 
 class Transaction(DomainModel):
