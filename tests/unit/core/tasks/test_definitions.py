@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from core import (
     Account,
+    AccountId,
     CurrencyPair,
     Money,
     StrategyParameters,
@@ -46,11 +47,11 @@ class TestDefinitions:
         definition = TradingTaskDefinition(
             name="Live USD_JPY",
             instrument=CurrencyPair.of("USD_JPY"),
-            account=Account.of("001"),
+            account=Account(id=AccountId.of("001")),
         )
 
         assert definition.task_type == TaskType.TRADING
-        assert definition.account == Account.of("001")
+        assert definition.account == Account(id=AccountId.of("001"))
         assert definition.dry_run is True
 
     def test_backtest_task_definition_rejects_non_positive_initial_balance(self) -> None:

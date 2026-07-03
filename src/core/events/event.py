@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from decimal import Decimal
 from logging import Logger
 from typing import Any, Self
@@ -91,7 +90,7 @@ class Event(DomainModel):
         *,
         code: ErrorCode = ErrorCode.WARNING,
         category: ErrorCategory = ErrorCategory.UNKNOWN,
-        details: ErrorDetails | Mapping[str, Any] | None = None,
+        details: ErrorDetails | None = None,
         **kwargs: Any,
     ) -> Event:
         """Create a warning event."""
@@ -110,7 +109,7 @@ class Event(DomainModel):
             error=EventError(
                 code=code,
                 category=category,
-                details=ErrorDetails.model_validate(details or {}),
+                details=details or ErrorDetails(),
             ),
             **kwargs,
         )
@@ -123,7 +122,7 @@ class Event(DomainModel):
         code: ErrorCode = ErrorCode.RETRYABLE_ERROR,
         category: ErrorCategory = ErrorCategory.UNKNOWN,
         retry_after_seconds: Decimal | int | None = None,
-        details: ErrorDetails | Mapping[str, Any] | None = None,
+        details: ErrorDetails | None = None,
         **kwargs: Any,
     ) -> Event:
         """Create an error event that callers may retry."""
@@ -147,7 +146,7 @@ class Event(DomainModel):
                 retryable=True,
                 fatal=False,
                 retry_after_seconds=retry_after,
-                details=ErrorDetails.model_validate(details or {}),
+                details=details or ErrorDetails(),
             ),
             **kwargs,
         )
@@ -159,7 +158,7 @@ class Event(DomainModel):
         *,
         code: ErrorCode = ErrorCode.FATAL_ERROR,
         category: ErrorCategory = ErrorCategory.UNKNOWN,
-        details: ErrorDetails | Mapping[str, Any] | None = None,
+        details: ErrorDetails | None = None,
         **kwargs: Any,
     ) -> Event:
         """Create an error event that should fail the task or process."""
@@ -180,7 +179,7 @@ class Event(DomainModel):
                 category=category,
                 retryable=False,
                 fatal=True,
-                details=ErrorDetails.model_validate(details or {}),
+                details=details or ErrorDetails(),
             ),
             **kwargs,
         )

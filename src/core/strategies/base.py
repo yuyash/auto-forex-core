@@ -7,7 +7,6 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from logging import Logger
-from typing import Any
 from uuid import UUID
 
 from pydantic import Field
@@ -81,7 +80,7 @@ class Strategy(ABC):
         self,
         *,
         name: str,
-        parameters: StrategyParameters | Mapping[str, Any] | None = None,
+        parameters: StrategyParameters | None = None,
     ) -> None:
         _LOGGER.debug(
             "Initializing strategy %s",
@@ -92,7 +91,7 @@ class Strategy(ABC):
             },
         )
         self.name = name
-        self.parameters = self.normalize_parameters(parameters or {})
+        self.parameters = self.normalize_parameters(parameters or StrategyParameters())
         self.validate_parameters(self.parameters)
         _LOGGER.info(
             "Initialized strategy %s",
@@ -112,10 +111,10 @@ class Strategy(ABC):
     @classmethod
     def normalize_parameters(
         cls,
-        parameters: StrategyParameters | Mapping[str, Any],
+        parameters: StrategyParameters,
     ) -> StrategyParameters:
         """Normalize external parameters into the strategy's canonical shape."""
-        normalized = cls.default_parameters().merge(StrategyParameters.model_validate(parameters))
+        normalized = cls.default_parameters().merge(parameters)
         _LOGGER.debug(
             "Normalized strategy parameters for %s",
             cls.__name__,

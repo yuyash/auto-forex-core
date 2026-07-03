@@ -31,10 +31,11 @@ class TestMoney:
         with pytest.raises(ValueError, match="greater than 0"):
             Money.of("0", "USD").require_positive()
 
-    def test_money_coerce_accepts_mapping_and_existing_money(self) -> None:
-        money = Money.coerce({"amount": "12.50", "currency": "USD"}, "USD")
+    def test_money_coerce_accepts_raw_amount_and_existing_money(self) -> None:
+        money = Money.model_validate({"amount": "12.50", "currency": "USD"})
 
         assert money == Money.of("12.50", "USD")
+        assert Money.coerce("12.50", "USD") == money
         assert Money.coerce(money, "USD") == money
         with pytest.raises(ValueError, match="currency mismatch"):
             Money.coerce(money, "JPY")

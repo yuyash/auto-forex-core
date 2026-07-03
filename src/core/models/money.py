@@ -164,10 +164,10 @@ class Money(DomainModel):
     @classmethod
     def coerce(
         cls,
-        value: Money | Mapping[str, Any] | Decimal | int | str,
+        value: Money | Decimal | int | str,
         currency: Currency | str,
     ) -> Money:
-        """Coerce a raw amount, mapping, or Money into the requested currency."""
+        """Coerce a raw amount or Money into the requested currency."""
         expected_currency = Currency.of(currency)
         if isinstance(value, Money):
             return value.require_currency(expected_currency)

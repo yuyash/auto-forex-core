@@ -30,10 +30,10 @@ class MemoryAccountManager(AccountManager):
         self.closed = False
 
     def list_accounts(self) -> tuple[Account, ...]:
-        return (Account.of({"id": "001", "provider": PAPER_PROVIDER}),)
+        return (Account(id=AccountId.of("001"), provider=PAPER_PROVIDER),)
 
     def get_account(self, account_id: AccountId) -> Account:
-        return Account.of({"id": str(account_id), "provider": PAPER_PROVIDER})
+        return Account(id=account_id, provider=PAPER_PROVIDER)
 
     def get_account_summary(self, account_id: AccountId) -> AccountSummary:
         return AccountSummary.model_validate({"account_id": account_id, "currency": "USD"})
@@ -53,13 +53,7 @@ class MemoryAccountManager(AccountManager):
         margin_rate: Decimal | None = None,
     ) -> Account:
         _ = margin_rate
-        return Account.of(
-            {
-                "id": str(account_id),
-                "provider": PAPER_PROVIDER,
-                "alias": alias,
-            }
-        )
+        return Account(id=account_id, provider=PAPER_PROVIDER, alias=alias)
 
     def get_account_changes(
         self,

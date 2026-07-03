@@ -5,6 +5,7 @@ from pathlib import Path
 
 from core import (
     Account,
+    AccountId,
     BacktestTaskDefinition,
     Candle,
     CandleGranularity,
@@ -157,7 +158,7 @@ class TestForexQuotesTaskFlow:
         definition = TradingTaskDefinition(
             name="Trading EUR_USD sample quotes",
             instrument=EUR_USD,
-            account=Account.of("test-account"),
+            account=Account(id=AccountId.of("test-account")),
             dry_run=True,
             parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         )
@@ -193,7 +194,7 @@ class TestForexQuotesTaskFlow:
         definition = TradingTaskDefinition(
             name="Trading AED_AUD compressed sample quotes",
             instrument=AED_AUD,
-            account=Account.of("test-account"),
+            account=Account(id=AccountId.of("test-account")),
             dry_run=True,
             parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         )
@@ -232,7 +233,7 @@ class TestForexQuotesTaskFlow:
         definition = TradingTaskDefinition(
             name="Trading AED_AUD compressed minute aggs",
             instrument=AED_AUD,
-            account=Account.of("test-account"),
+            account=Account(id=AccountId.of("test-account")),
             dry_run=True,
             parameters=StrategyParameters.of(risk_percent=Decimal("1.0")),
         )

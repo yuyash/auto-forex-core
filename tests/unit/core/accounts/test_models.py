@@ -12,13 +12,11 @@ class TestModels:
         assert str(account_id) == "001"
 
     def test_account_models_broker_neutral_account_reference(self) -> None:
-        account = Account.of(
-            {
-                "id": " 001 ",
-                "provider": " oanda ",
-                "alias": " primary ",
-                "metadata": {"environment": "practice"},
-            }
+        account = Account(
+            id=AccountId.of(" 001 "),
+            provider=AccountProvider.of(" oanda "),
+            alias=" primary ",
+            metadata=Metadata.of(environment="practice"),
         )
 
         assert account.id == AccountId.of("001")
@@ -30,11 +28,11 @@ class TestModels:
 
     def test_account_rejects_blank_identifier(self) -> None:
         with pytest.raises(ValidationError, match="account identifier must not be blank"):
-            Account.of(" ")
+            Account(id=AccountId.of(" "))
 
     def test_account_rejects_blank_provider(self) -> None:
         with pytest.raises(ValidationError):
-            Account.of({"id": "001", "provider": " "})
+            Account(id=AccountId.of("001"), provider=AccountProvider.of(" "))
 
     def test_account_summary_normalizes_money_fields(self) -> None:
         summary = AccountSummary.model_validate(

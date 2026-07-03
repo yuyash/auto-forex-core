@@ -26,7 +26,7 @@ class TestBase:
     def test_strategy_normalizes_parameters_and_context(self) -> None:
         strategy = HoldStrategy(
             name="hold",
-            parameters={"risk_percent": Decimal("1.5")},
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.5")),
         )
         context = StrategyContext(
             task_id=__import__("core").new_uuid(),

@@ -110,9 +110,11 @@ class Account(DomainModel):
     metadata: Metadata = Field(default_factory=Metadata)
 
     @classmethod
-    def of(cls, value: Account | str | Mapping[str, Any]) -> Self:
+    def of(cls, value: Account) -> Account:
         """Coerce a value to Account."""
-        return cls.model_validate(value)
+        if not isinstance(value, Account):
+            raise TypeError("account value must be an Account")
+        return value
 
     @model_validator(mode="before")
     @classmethod

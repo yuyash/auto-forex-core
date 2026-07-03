@@ -124,7 +124,7 @@ class TestStrategyBrokerFlow:
         data_source = MemoryDataSource([tick])
         strategy = HoldStrategy(
             name="snowball",
-            parameters={"risk_percent": Decimal("1.5")},
+            parameters=StrategyParameters.of(risk_percent=Decimal("1.5")),
         )
         context = StrategyContext(
             task_id=task_id,

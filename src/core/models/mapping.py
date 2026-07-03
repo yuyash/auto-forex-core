@@ -55,11 +55,9 @@ class MappingValueObject(DomainModel):
         """Return an instance with one value added or replaced."""
         return self.evolve(values={**self.values, key: value})
 
-    def merge(self, values: Mapping[str, Any] | MappingValueObject) -> Self:
+    def merge(self, values: MappingValueObject) -> Self:
         """Return an instance with values merged over this instance."""
-        if isinstance(values, MappingValueObject):
-            values = values.values
-        return self.evolve(values={**self.values, **values})
+        return self.evolve(values={**self.values, **values.values})
 
     def to_dict(self) -> dict[str, Any]:
         """Return a plain dictionary copy."""
