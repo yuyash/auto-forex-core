@@ -35,11 +35,6 @@ from core.events import (
     EventSource,
     EventType,
     EventTypeMetadata,
-    StrategyAction,
-    StrategyDecisionCode,
-    StrategyDecisionReason,
-    StrategyEvent,
-    TradeSide,
 )
 from core.logging import CORE_LOGGER_NAME, LogLevel, configure_logging, get_logger
 from core.models import (
@@ -70,10 +65,16 @@ from core.sources import (
 )
 from core.strategies import (
     Strategy,
+    StrategyAction,
     StrategyContext,
+    StrategyDecisionCode,
+    StrategyDecisionReason,
+    StrategyEvent,
+    StrategyExecutionReport,
     StrategyParameters,
     StrategyResult,
     StrategyState,
+    TradeSide,
 )
 from core.tasks import (
     ALLOWED_TRANSITIONS,
@@ -156,6 +157,7 @@ __all__ = [
     "StrategyDecisionCode",
     "StrategyDecisionReason",
     "StrategyEvent",
+    "StrategyExecutionReport",
     "StrategyParameters",
     "StrategyResult",
     "StrategyState",

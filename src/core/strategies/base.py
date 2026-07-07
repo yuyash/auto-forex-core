@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from logging import Logger
@@ -11,12 +11,12 @@ from uuid import UUID
 
 from pydantic import Field
 
-from core.events import StrategyEvent
 from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.metadata import Metadata
 from core.models.money import CurrencyPair
 from core.sources.models import Candle, Tick
+from core.strategies.execution import StrategyEvent, StrategyExecutionReport
 from core.strategies.models import StrategyParameters, StrategyState
 from core.tasks.state import TaskType
 
@@ -163,6 +163,22 @@ class Strategy(ABC):
             },
         )
         return StrategyResult()
+
+    def on_execution_reports(
+        self,
+        reports: Sequence[StrategyExecutionReport],
+        context: StrategyContext,
+    ) -> StrategyState:
+        """Reconcile broker execution reports into strategy state."""
+        _LOGGER.debug(
+            "Strategy %s ignored execution reports in default handler",
+            self.name,
+            extra={
+                **self._log_extra(context=context),
+                "execution_report_count": len(reports),
+            },
+        )
+        return context.state
 
     def on_stop(self, context: StrategyContext) -> StrategyResult:
         """Handle task stop after market data processing ends."""
