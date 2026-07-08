@@ -11,7 +11,7 @@ from core.brokers import Broker
 from core.sources import DataSource
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class TradingProvider:
     """Bundle of provider-specific services."""
 
@@ -28,10 +28,10 @@ class TradingProvider:
         broker: Broker,
         data: DataSource,
     ) -> None:
-        self._provider = provider
-        self._account_manager = account_manager
-        self._broker = broker
-        self._data = data
+        object.__setattr__(self, "_provider", provider)
+        object.__setattr__(self, "_account_manager", account_manager)
+        object.__setattr__(self, "_broker", broker)
+        object.__setattr__(self, "_data", data)
 
     @property
     def provider(self) -> AccountProvider:
