@@ -1,6 +1,6 @@
 """Broker abstraction and broker-related models provided by Core."""
 
-from core.brokers.base import Broker
+from core.brokers.base import Broker, OrderExecutor, PositionCloser, PositionReader
 from core.brokers.models import (
     BrokerOrderId,
     BrokerPositionId,
@@ -28,6 +28,7 @@ __all__ = [
     "BrokerTradeId",
     "BrokerTransactionId",
     "Order",
+    "OrderExecutor",
     "OrderId",
     "OrderMessageKey",
     "OrderReason",
@@ -36,6 +37,8 @@ __all__ = [
     "OrderStatus",
     "OrderType",
     "Position",
+    "PositionCloser",
+    "PositionReader",
     "PositionSide",
     "PositionSideState",
     "Trade",
