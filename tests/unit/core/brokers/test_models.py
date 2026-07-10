@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from core import (
     BrokerOrderId,
     BrokerPositionId,
@@ -17,6 +15,7 @@ from core import (
     Position,
     PositionSide,
     Transaction,
+    Units,
 )
 
 USD_JPY = CurrencyPair.of("USD_JPY")
@@ -43,7 +42,7 @@ class TestModels:
             broker_order_id=broker_order_id,
             instrument=USD_JPY,
             side=OrderSide.BUY,
-            units=Decimal("1000"),
+            units=Units("1000"),
             reason=reason,
         )
         position = Position.model_validate(
@@ -51,7 +50,7 @@ class TestModels:
                 "instrument": USD_JPY,
                 "long": {
                     "broker_position_id": broker_position_id,
-                    "units": Decimal("1000"),
+                    "units": Units("1000"),
                     "average_entry_price": Money.of("150.10", "JPY"),
                 },
             }
@@ -78,7 +77,7 @@ class TestModels:
         order = Order(
             instrument=USD_JPY,
             side=OrderSide.BUY,
-            units=Decimal("1000"),
+            units=Units("1000"),
             price=Money.of("150.12", "JPY"),
         )
 

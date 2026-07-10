@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from decimal import Decimal
 
 from core.brokers.models import Order, Position, PositionSide
 from core.models.money import CurrencyPair
+from core.models.values import Units
 
 
 class OrderExecutor(ABC):
@@ -27,7 +27,7 @@ class PositionCloser(ABC):
         *,
         position: Position,
         side: PositionSide,
-        units: Decimal | None = None,
+        units: Units | None = None,
     ) -> Order:
         """Close all or part of an open broker position."""
 

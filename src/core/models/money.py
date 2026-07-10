@@ -150,21 +150,24 @@ class Money(DomainModel):
         if isinstance(data, Money):
             return data
         if isinstance(data, tuple | list) and len(data) == 2:
+            cls._reject_primitive_amount(data[0])
             return {"amount": data[0], "currency": data[1]}
+        if isinstance(data, Mapping) and "amount" in data:
+            cls._reject_primitive_amount(data["amount"])
         return data
 
     @classmethod
-    def of(cls, amount: Money | Decimal | int | str, currency: Currency | str) -> Money:
+    def of(cls, amount: Money | Decimal | str, currency: Currency | str) -> Money:
         """Create money from a numeric amount and currency."""
         expected_currency = Currency.of(currency)
         if isinstance(amount, Money):
             return amount.require_currency(expected_currency)
-        return cls(amount=Decimal(str(amount)), currency=expected_currency)
+        return cls(amount=cls._amount_decimal(amount), currency=expected_currency)
 
     @classmethod
     def coerce(
         cls,
-        value: Money | Decimal | int | str,
+        value: Money | Decimal | str | Mapping[str, Any],
         currency: Currency | str,
     ) -> Money:
         """Coerce a raw amount or Money into the requested currency."""
@@ -174,6 +177,16 @@ class Money(DomainModel):
         if isinstance(value, Mapping):
             return cls.model_validate(value).require_currency(expected_currency)
         return cls.of(value, expected_currency)
+
+    @staticmethod
+    def _reject_primitive_amount(value: Any) -> None:
+        if isinstance(value, bool | int | float):
+            raise TypeError("money amount must be provided as Money, Decimal, or str")
+
+    @classmethod
+    def _amount_decimal(cls, value: Decimal | str) -> Decimal:
+        cls._reject_primitive_amount(value)
+        return Decimal(str(value))
 
     def require_currency(self, currency: Currency) -> Self:
         """Return self when currencies match, otherwise raise ValueError."""

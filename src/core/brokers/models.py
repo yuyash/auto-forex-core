@@ -16,6 +16,7 @@ from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
 from core.models.metadata import Metadata
 from core.models.money import Currency, CurrencyPair, Money
+from core.models.values import Units
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -239,11 +240,11 @@ class Order(DomainModel):
     broker_order_id: BrokerOrderId | None = None
     instrument: CurrencyPair
     side: OrderSide
-    units: Decimal = Field(gt=0)
+    units: Units
     order_type: OrderType = OrderType.MARKET
     price: Money | None = None
     status: OrderStatus = OrderStatus.PENDING
-    filled_units: Decimal = Field(default=Decimal("0"), ge=0)
+    filled_units: Units = Units("0")
     average_fill_price: Money | None = None
     reason: OrderReason = Field(default_factory=OrderReason)
     metadata: Metadata = Field(default_factory=Metadata)
@@ -271,6 +272,7 @@ class Order(DomainModel):
 
     @model_validator(mode="after")
     def _validate_order(self) -> Self:
+        self.units.require_positive()
         if self.filled_units > self.units:
             msg = "filled units must be less than or equal to order units"
             raise ValueError(msg)
@@ -291,16 +293,16 @@ class Order(DomainModel):
 
     @computed_field
     @property
-    def remaining_units(self) -> Decimal:
+    def remaining_units(self) -> Units:
         """Return unfilled units."""
-        return self.units - self.filled_units
+        return Units.of(self.units - self.filled_units)
 
 
 class PositionSideState(DomainModel):
     """State for one side of a broker-neutral instrument position."""
 
     side: PositionSide
-    units: Decimal = Field(default=Decimal("0"), ge=0)
+    units: Units = Units("0")
     average_entry_price: Money | None = None
     broker_position_id: BrokerPositionId | None = None
     unrealized_pl: Money | None = None
@@ -441,7 +443,7 @@ class Trade(DomainModel):
     id: BrokerTradeId
     instrument: CurrencyPair
     side: PositionSide
-    units: Decimal = Field(gt=0)
+    units: Units
     price: Money | None = None
     open_time: AwareDatetime | None = None
     close_time: AwareDatetime | None = None
@@ -473,6 +475,11 @@ class Trade(DomainModel):
         if normalized.get("state") is not None:
             normalized["state"] = str(normalized["state"]).strip().lower()
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_trade(self) -> Self:
+        self.units.require_positive()
+        return self
 
 
 class Transaction(DomainModel):

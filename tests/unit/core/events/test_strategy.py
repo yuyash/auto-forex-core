@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
-from decimal import Decimal
 
-from core import Order, OrderSide, OrderStatus, StrategyExecutionResponse
+from core import Confidence, Order, OrderSide, OrderStatus, StrategyExecutionResponse, Units
 from core.events import (
     EventMessageKey,
     EventSource,
@@ -27,13 +26,13 @@ class TestStrategyEvent:
             action=StrategyAction.OPEN_TRADE,
             instrument=CurrencyPair.of("USD_JPY"),
             side=TradeSide.BUY,
-            units=Decimal("1000"),
+            units=Units("1000"),
             price=Money.of("150.11", "JPY"),
             display_id="L1R0B1",
             reason=StrategyDecisionReason(
                 code=StrategyDecisionCode.ENTRY_SIGNAL,
                 rule_id="snowball.breakout",
-                confidence=Decimal("0.8"),
+                confidence=Confidence("0.8"),
                 evidence=Metadata.of(bid="150.10", ask="150.11"),
             ),
         )
@@ -54,7 +53,7 @@ class TestStrategyEvent:
             action=StrategyAction.OPEN_TRADE,
             instrument=CurrencyPair.of("USD_JPY"),
             side=TradeSide.BUY,
-            units=Decimal("1000"),
+            units=Units("1000"),
             price=Money.of("150.11", "JPY"),
             display_id="L1R0B1",
         )
@@ -64,10 +63,10 @@ class TestStrategyEvent:
             order=Order(
                 instrument=CurrencyPair.of("USD_JPY"),
                 side=OrderSide.BUY,
-                units=Decimal("1000"),
+                units=Units("1000"),
                 price=Money.of("150.11", "JPY"),
                 status=OrderStatus.FILLED,
-                filled_units=Decimal("1000"),
+                filled_units=Units("1000"),
             ),
         )
 
@@ -85,8 +84,40 @@ class TestStrategyEvent:
             response=report,
             instrument=event.instrument,
         )
-        assert aggregate.source == EventSource.SERVER
+        assert aggregate.source == EventSource.CORE
         assert aggregate.request is event
         assert aggregate.response is report
         assert aggregate.action == StrategyAction.OPEN_TRADE
         assert aggregate.metadata["filled_entry_price"] == "150.11 JPY"
+
+    def test_strategy_execution_response_records_rebuild_fill_as_entry_and_rebuild(
+        self,
+    ) -> None:
+        task_id = new_uuid()
+        event = StrategyEventRequest(
+            task_id=task_id,
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            action=StrategyAction.OPEN_TRADE,
+            instrument=CurrencyPair.of("USD_JPY"),
+            side=TradeSide.BUY,
+            units=Units("1000"),
+            price=Money.of("149.92", "JPY"),
+            display_id="L1R0B2",
+            metadata=Metadata.of(is_rebuild=True),
+        )
+
+        report = StrategyExecutionResponse(
+            event=event,
+            order=Order(
+                instrument=CurrencyPair.of("USD_JPY"),
+                side=OrderSide.BUY,
+                units=Units("1000"),
+                price=Money.of("149.92", "JPY"),
+                status=OrderStatus.FILLED,
+                filled_units=Units("1000"),
+                average_fill_price=Money.of("149.95", "JPY"),
+            ),
+        )
+
+        assert report.metadata["filled_entry_price"] == "149.95 JPY"
+        assert report.metadata["filled_rebuild_price"] == "149.95 JPY"

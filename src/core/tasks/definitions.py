@@ -102,7 +102,7 @@ class TradingTaskDefinition(BaseTaskDefinition):
     """Definition for running a strategy against a live broker account."""
 
     task_type: Literal[TaskType.TRADING] = TaskType.TRADING
-    account: Account | None = None
+    account: Account
     dry_run: bool = True
 
 

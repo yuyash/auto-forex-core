@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 from enum import StrEnum
 from logging import Logger
 from typing import Any
@@ -17,6 +16,7 @@ from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.metadata import Metadata
 from core.models.money import CurrencyPair, Money
+from core.models.values import Confidence, Units
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -56,7 +56,7 @@ class StrategyDecisionReason(DomainModel):
 
     code: StrategyDecisionCode = StrategyDecisionCode.UNKNOWN
     rule_id: str = ""
-    confidence: Decimal | None = Field(default=None, ge=0, le=1)
+    confidence: Confidence | None = None
     evidence: Metadata = Field(default_factory=Metadata)
 
 
@@ -70,7 +70,7 @@ class StrategyEventRequest(Event):
     action: StrategyAction = StrategyAction.HOLD
     instrument: CurrencyPair
     side: TradeSide | None = None
-    units: Decimal | None = Field(default=None, gt=0)
+    units: Units | None = None
     price: Money | None = None
     reason: StrategyDecisionReason = Field(default_factory=StrategyDecisionReason)
     metadata: Metadata = Field(default_factory=Metadata)
@@ -96,6 +96,7 @@ class StrategyEventRequest(Event):
             if self.units is None:
                 msg = f"{self.action.value} strategy request requires units"
                 raise ValueError(msg)
+            self.units.require_positive()
         _LOGGER.debug(
             "Validated strategy request %s",
             self.id,
@@ -191,19 +192,19 @@ class StrategyExecutionResponse(Event):
         if fill_price is None:
             return metadata
 
-        key = self._filled_price_key()
-        if key is None:
-            return metadata
-        return metadata.with_value(key, str(fill_price))
+        return metadata.merge(self._filled_price_metadata(fill_price))
 
-    def _filled_price_key(self) -> str | None:
+    def _filled_price_metadata(self, fill_price: Money) -> Metadata:
         if self.event.action == StrategyAction.OPEN_TRADE:
             if self._metadata_bool(self.event.metadata.get("is_rebuild", False)):
-                return "filled_rebuild_price"
-            return "filled_entry_price"
+                return Metadata.of(
+                    filled_entry_price=str(fill_price),
+                    filled_rebuild_price=str(fill_price),
+                )
+            return Metadata.of(filled_entry_price=str(fill_price))
 
         if self.event.action != StrategyAction.CLOSE_TRADE:
-            return None
+            return Metadata()
 
         close_reason = str(self.event.metadata.get("close_reason", ""))
         if close_reason in {
@@ -211,10 +212,10 @@ class StrategyExecutionResponse(Event):
             "counter_take_profit",
             "layer_initial_take_profit",
         }:
-            return "filled_take_profit_price"
+            return Metadata.of(filled_take_profit_price=str(fill_price))
         if close_reason == "stop_loss":
-            return "filled_stop_loss_price"
-        return "filled_close_price"
+            return Metadata.of(filled_stop_loss_price=str(fill_price))
+        return Metadata.of(filled_close_price=str(fill_price))
 
     @staticmethod
     def _metadata_bool(value: object) -> bool:
@@ -227,7 +228,7 @@ class StrategyEvent(Event):
     """Aggregated strategy event combining a request with its execution response."""
 
     type: EventType = EventType.STRATEGY_SIGNAL
-    source: EventSource = EventSource.SERVER
+    source: EventSource = EventSource.CORE
     task_id: UUID
     message_key: EventMessageKey = EventMessageKey.STRATEGY_SIGNAL
     request: StrategyEventRequest
@@ -235,7 +236,7 @@ class StrategyEvent(Event):
     action: StrategyAction = StrategyAction.HOLD
     instrument: CurrencyPair
     side: TradeSide | None = None
-    units: Decimal | None = Field(default=None, gt=0)
+    units: Units | None = None
     price: Money | None = None
     reason: StrategyDecisionReason = Field(default_factory=StrategyDecisionReason)
     metadata: Metadata = Field(default_factory=Metadata)

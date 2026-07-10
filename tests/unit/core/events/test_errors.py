@@ -1,4 +1,4 @@
-from decimal import Decimal
+from datetime import timedelta
 from typing import Any, cast
 
 import pytest
@@ -20,14 +20,14 @@ class TestErrors:
             {
                 "code": "broker_timeout",
                 "category": "broker",
-                "retry_after_seconds": Decimal("1"),
+                "retry_after": timedelta(seconds=1),
                 "details": {"request_id": "req-1"},
             }
         )
 
         assert error.code == ErrorCode.BROKER_TIMEOUT
         assert error.category == ErrorCategory.BROKER
-        assert error.retry_after_seconds == Decimal("1")
+        assert error.retry_after == timedelta(seconds=1)
         assert error.details == ErrorDetails.of(request_id="req-1")
 
         immutable_details = cast(Any, error.details.values)

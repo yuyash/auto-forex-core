@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime
-from decimal import Decimal
 from logging import Logger
 
-from pydantic import Field, model_validator
+from pydantic import model_validator
 
 from core.logging import get_logger
 from core.models import CurrencyPair
 from core.models.base import DomainModel
+from core.models.values import Pips
 from core.sources.base import DataSource, DataSourceFilter
 from core.sources.models import Candle, CandleGranularity, Tick, TickGranularity
 
@@ -22,12 +22,12 @@ class SpreadFilter(DomainModel):
     """Tick-level bid/ask spread filter expressed in pips."""
 
     enabled: bool = True
-    max_spread_pips: Decimal | None = Field(default=None, gt=0)
+    max_spread_pips: Pips | None = None
 
     @classmethod
-    def of(cls, max_spread_pips: Decimal | int | str) -> SpreadFilter:
+    def of(cls, max_spread_pips: Pips) -> SpreadFilter:
         """Create an enabled spread filter for a maximum spread in pips."""
-        return cls(max_spread_pips=Decimal(str(max_spread_pips)))
+        return cls(max_spread_pips=Pips.of(max_spread_pips))
 
     @model_validator(mode="after")
     def _validate_configuration(self) -> SpreadFilter:
@@ -35,6 +35,8 @@ class SpreadFilter(DomainModel):
             _LOGGER.debug("Rejected enabled spread filter without max spread")
             msg = "max_spread_pips is required when spread filter is enabled"
             raise ValueError(msg)
+        if self.max_spread_pips is not None:
+            self.max_spread_pips.require_positive()
         _LOGGER.debug(
             "Validated spread filter",
             extra={
@@ -67,9 +69,9 @@ class SpreadFilter(DomainModel):
         return allowed
 
     @staticmethod
-    def spread_pips(tick: Tick) -> Decimal:
+    def spread_pips(tick: Tick) -> Pips:
         """Return a tick's bid/ask spread in instrument pips."""
-        return tick.spread.amount / tick.instrument.pip_size
+        return Pips.of(tick.spread.amount / tick.instrument.pip_size)
 
     def filter_ticks(self, ticks: Iterable[Tick]) -> Iterable[Tick]:
         """Yield ticks allowed by the spread threshold."""
@@ -181,7 +183,7 @@ class SpreadFilteredDataSource(DataSource):
         source: DataSource,
         *,
         spread_filter: SpreadFilter | None = None,
-        max_spread_pips: Decimal | None = None,
+        max_spread_pips: Pips | None = None,
         enabled: bool = True,
     ) -> None:
         if spread_filter is not None and max_spread_pips is not None:
@@ -234,7 +236,7 @@ class SpreadFilteredDataSource(DataSource):
         self._filtered_source.close()
 
     @staticmethod
-    def _optional_decimal(value: Decimal | None) -> Decimal | None:
+    def _optional_decimal(value: Pips | None) -> Pips | None:
         if value is None:
             return None
-        return value
+        return Pips.of(value)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from datetime import timedelta
 from logging import Logger
 from typing import Any, Self
 from uuid import UUID
@@ -122,12 +122,12 @@ class Event(DomainModel):
         *,
         code: ErrorCode = ErrorCode.RETRYABLE_ERROR,
         category: ErrorCategory = ErrorCategory.UNKNOWN,
-        retry_after_seconds: Decimal | int | None = None,
+        retry_after: timedelta | None = None,
         details: ErrorDetails | None = None,
         **kwargs: Any,
     ) -> Event:
         """Create an error event that callers may retry."""
-        retry_after = Decimal(str(retry_after_seconds)) if retry_after_seconds is not None else None
+        retry_delay = cls._retry_after(retry_after)
         _LOGGER.debug(
             "Creating retryable error event",
             extra={
@@ -135,7 +135,7 @@ class Event(DomainModel):
                 "message_key": message_key.value,
                 "error_code": code.value,
                 "error_category": category.value,
-                "retry_after_seconds": str(retry_after or ""),
+                "retry_after": str(retry_delay or ""),
             },
         )
         return cls(
@@ -146,7 +146,7 @@ class Event(DomainModel):
                 category=category,
                 retryable=True,
                 fatal=False,
-                retry_after_seconds=retry_after,
+                retry_after=retry_delay,
                 details=details or ErrorDetails(),
             ),
             **kwargs,
@@ -224,3 +224,13 @@ class Event(DomainModel):
 
     def _source_value(self) -> str:
         return self.source.value
+
+    @staticmethod
+    def _retry_after(value: timedelta | None) -> timedelta | None:
+        if value is None:
+            return None
+        if isinstance(value, timedelta):
+            if value.total_seconds() < 0:
+                raise ValueError("retry_after must not be negative")
+            return value
+        raise TypeError("retry_after must be a timedelta")

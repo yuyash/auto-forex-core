@@ -1,9 +1,10 @@
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from core.models import Currency, CurrencyPair, Money
+from core.models import Currency, CurrencyPair, Money, Units
 
 
 class TestMoney:
@@ -39,3 +40,13 @@ class TestMoney:
         assert Money.coerce(money, "USD") == money
         with pytest.raises(ValueError, match="currency mismatch"):
             Money.coerce(money, "JPY")
+
+    def test_money_and_quantity_values_reject_primitive_numbers(self) -> None:
+        primitive_amount: Any = 10
+        primitive_units: Any = 1000
+        with pytest.raises(TypeError, match="money amount"):
+            Money.of(primitive_amount, "USD")
+        with pytest.raises(TypeError, match="money amount"):
+            Money.model_validate({"amount": primitive_amount, "currency": "USD"})
+        with pytest.raises(TypeError, match="units"):
+            Units(primitive_units)

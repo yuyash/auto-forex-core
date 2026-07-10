@@ -24,6 +24,7 @@ from core import (
     StrategyResult,
     TaskType,
     Tick,
+    Units,
     new_uuid,
 )
 
@@ -83,10 +84,10 @@ class MemoryBroker(Broker):
         *,
         position: Position,
         side: PositionSide,
-        units: Decimal | None = None,
+        units: Units | None = None,
     ) -> Order:
         state = position.require_side(side)
-        amount = units or state.units
+        amount = units if units is not None else state.units
         return Order(
             status=OrderStatus.FILLED,
             broker_order_id=BrokerOrderId.of("close-order-1"),
@@ -102,7 +103,7 @@ class MemoryBroker(Broker):
             {
                 "instrument": USD_JPY,
                 "long": {
-                    "units": Decimal("1000"),
+                    "units": Units("1000"),
                     "average_entry_price": Money.of("150.10", "JPY"),
                 },
             }
@@ -140,7 +141,7 @@ class TestStrategyBrokerFlow:
             Order(
                 instrument=USD_JPY,
                 side=OrderSide.BUY,
-                units=Decimal("1000"),
+                units=Units("1000"),
                 price=Money.of("150.12", "JPY"),
                 metadata=Metadata.of(event_id="event-1"),
             )

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from decimal import Decimal
 
 from core import (
     Account,
@@ -13,6 +12,7 @@ from core import (
     Broker,
     CurrencyPair,
     DataSource,
+    MarginRate,
     Metadata,
     Order,
     OrderSide,
@@ -20,6 +20,7 @@ from core import (
     PositionSide,
     Tick,
     TradingProvider,
+    Units,
 )
 
 PAPER_PROVIDER = AccountProvider.of("paper")
@@ -50,7 +51,7 @@ class MemoryAccountManager(AccountManager):
         account_id: AccountId,
         *,
         alias: str | None = None,
-        margin_rate: Decimal | None = None,
+        margin_rate: MarginRate | None = None,
     ) -> Account:
         _ = margin_rate
         return Account(id=account_id, provider=PAPER_PROVIDER, alias=alias)
@@ -80,14 +81,14 @@ class MemoryBroker(Broker):
         *,
         position: Position,
         side: PositionSide,
-        units: Decimal | None = None,
+        units: Units | None = None,
     ) -> Order:
         _ = side
         _ = units
         return Order(
             instrument=position.instrument,
             side=OrderSide.SELL,
-            units=Decimal("0.1"),
+            units=Units("0.1"),
         )
 
     def positions(self, *, instrument: CurrencyPair | None = None) -> Sequence[Position]:

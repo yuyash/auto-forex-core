@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from decimal import Decimal
 
 from core.accounts.models import Account, AccountId, AccountSummary
 from core.models.metadata import Metadata
 from core.models.money import CurrencyPair
+from core.models.values import MarginRate
 
 
 class AccountManager(ABC):
@@ -35,7 +35,7 @@ class AccountManager(ABC):
         account_id: AccountId,
         *,
         alias: str | None = None,
-        margin_rate: Decimal | None = None,
+        margin_rate: MarginRate | None = None,
     ) -> Account:
         """Configure mutable account settings."""
 

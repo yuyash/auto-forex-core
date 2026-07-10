@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
 from logging import Logger
 from typing import Any, Self
 
@@ -13,6 +12,7 @@ from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.metadata import Metadata
 from core.models.money import Currency, Money
+from core.models.values import MarginRate
 
 _LOGGER: Logger = get_logger(__name__)
 
@@ -159,7 +159,7 @@ class AccountSummary(DomainModel):
     nav: Money | None = None
     margin_used: Money | None = None
     margin_available: Money | None = None
-    margin_rate: Decimal | None = Field(default=None, ge=0)
+    margin_rate: MarginRate | None = None
     open_trade_count: int | None = Field(default=None, ge=0)
     open_position_count: int | None = Field(default=None, ge=0)
     pending_order_count: int | None = Field(default=None, ge=0)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from datetime import timedelta
 from enum import StrEnum
 
 from pydantic import Field
@@ -147,5 +147,5 @@ class EventError(DomainModel):
     category: ErrorCategory = ErrorCategory.UNKNOWN
     retryable: bool = False
     fatal: bool = False
-    retry_after_seconds: Decimal | None = Field(default=None, ge=0)
+    retry_after: timedelta | None = None
     details: ErrorDetails = Field(default_factory=ErrorDetails)

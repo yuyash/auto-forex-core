@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from core import (
     BrokerOrderId,
     CurrencyPair,
@@ -9,6 +7,7 @@ from core import (
     OrderStatus,
     Position,
     PositionSide,
+    Units,
 )
 from core.brokers import Broker
 
@@ -31,7 +30,7 @@ class MemoryBroker(Broker):
         *,
         position: Position,
         side: PositionSide,
-        units: Decimal | None = None,
+        units: Units | None = None,
     ) -> Order:
         state = position.require_side(side)
         amount = units or state.units
@@ -56,7 +55,7 @@ class TestBase:
         order = Order(
             instrument=CurrencyPair.of("USD_JPY"),
             side=OrderSide.BUY,
-            units=Decimal("1000"),
+            units=Units("1000"),
             price=Money.of("150.12", "JPY"),
         )
 

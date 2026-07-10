@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from core import Candle, CurrencyPair, Money, Tick, TickGranularity
+from core import Candle, CurrencyPair, Money, Pips, Tick, TickGranularity
 from core.sources import DataSource, FilteredDataSource, SpreadFilter, SpreadFilteredDataSource
 
 
@@ -45,7 +45,7 @@ class TestFilters:
     def test_spread_filter_calculates_spread_pips_from_instrument(self) -> None:
         tick = make_tick(bid="150.10", ask="150.13")
 
-        assert SpreadFilter.of("3").spread_pips(tick) == Decimal("3")
+        assert SpreadFilter.of(Pips("3")).spread_pips(tick) == Pips("3")
 
     def test_spread_filtered_data_source_filters_ticks_above_max_spread(self) -> None:
         source = SpreadFilteredDataSource(
@@ -55,7 +55,7 @@ class TestFilters:
                     make_tick(bid="150.10", ask="150.13"),
                 ]
             ),
-            max_spread_pips=Decimal("1"),
+            max_spread_pips=Pips("1"),
         )
 
         ticks = tuple(source.ticks(instrument=CurrencyPair.of("USD_JPY")))

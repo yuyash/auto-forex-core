@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from core.events import (
@@ -53,7 +54,7 @@ class TestEvent:
             EventMessageKey.BROKER_TIMEOUT,
             code=ErrorCode.BROKER_TIMEOUT,
             category=ErrorCategory.BROKER,
-            retry_after_seconds=1,
+            retry_after=timedelta(seconds=1),
         )
         fatal = Event.fatal_error(
             EventMessageKey.STRATEGY_STATE_CORRUPTED,
@@ -67,6 +68,6 @@ class TestEvent:
         assert retryable.is_error
         assert retryable.is_retryable
         assert retryable.error is not None
-        assert retryable.error.retry_after_seconds == Decimal("1")
+        assert retryable.error.retry_after == timedelta(seconds=1)
         assert fatal.is_fatal
         assert fatal.severity == EventSeverity.CRITICAL
