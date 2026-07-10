@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import RLock
 from types import TracebackType
 from typing import Literal, Self
@@ -30,6 +30,40 @@ RunnerType = Literal["backtest", "trading"]
 
 class TaskAlreadyRunningError(RuntimeError):
     """Raised when a task already has an active runner."""
+
+
+@dataclass(frozen=True, slots=True)
+class TaskRun:
+    """Handle for a started task execution."""
+
+    task: Task
+    _manager: TaskManager = field(repr=False, compare=False)
+
+    @property
+    def id(self) -> UUID:
+        """Return the executable task id."""
+        return self.task.id
+
+    def current(self) -> Task:
+        """Return the latest task snapshot."""
+        return self._manager.get(self.id)
+
+    def wait(self, *, timeout: float | None = None) -> Task:
+        """Wait for the run to finish and return the final task snapshot."""
+        return self._manager.wait(self.id, timeout=timeout)
+
+    def pause(self) -> Task:
+        """Request a graceful pause and return the latest task snapshot."""
+        return self._manager.pause(self.id)
+
+    def stop(self) -> Task:
+        """Request a graceful stop and return the latest task snapshot."""
+        return self._manager.stop(self.id)
+
+    def restart(self, *, timeout: float | None = None) -> TaskRun:
+        """Restart this task and return a handle for the restarted run."""
+        task = self._manager.restart(self.id, timeout=timeout)
+        return TaskRun(task=task, _manager=self._manager)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +118,7 @@ class TaskManager:
         data_source: DataSource,
         strategy: Strategy,
         broker: Broker | None = None,
-    ) -> ExecutableTask:
+    ) -> TaskRun:
         """Start a backtest task in the background."""
         clock = ManualClock(definition.start_at)
         started = ExecutableTask.from_definition(definition, clock=clock).start(clock=clock)
@@ -97,7 +131,7 @@ class TaskManager:
             broker=broker,
             clock=clock,
         )
-        return started
+        return TaskRun(task=started, _manager=self)
 
     def start_trading(
         self,
@@ -106,7 +140,7 @@ class TaskManager:
         data_source: DataSource,
         strategy: Strategy,
         broker: Broker | None = None,
-    ) -> ExecutableTask:
+    ) -> TaskRun:
         """Start a trading task in the background."""
         if not definition.dry_run and broker is None:
             msg = "trading task requires broker when dry_run is false"
@@ -122,7 +156,7 @@ class TaskManager:
             broker=broker,
             clock=clock,
         )
-        return started
+        return TaskRun(task=started, _manager=self)
 
     def get(self, task_id: UUID) -> Task:
         """Return the latest task state."""

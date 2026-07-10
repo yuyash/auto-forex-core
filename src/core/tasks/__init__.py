@@ -43,6 +43,7 @@ __all__ = [
     "TaskManager",
     "TaskNotFoundError",
     "TaskRepository",
+    "TaskRun",
     "TaskRuntime",
     "TaskStateError",
     "TaskStateMachine",
@@ -58,6 +59,7 @@ _LAZY_EXPORTS = {
     "TaskAlreadyRunningError": "core.tasks.manager",
     "TaskExecutionControl": "core.tasks.runner",
     "TaskManager": "core.tasks.manager",
+    "TaskRun": "core.tasks.manager",
     "TaskRuntime": "core.tasks.manager",
     "TradingRunner": "core.tasks.runner",
 }

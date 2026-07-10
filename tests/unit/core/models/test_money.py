@@ -41,6 +41,11 @@ class TestMoney:
         with pytest.raises(ValueError, match="currency mismatch"):
             Money.coerce(money, "JPY")
 
+    def test_money_string_displays_amount_rounded_to_two_decimal_places(self) -> None:
+        assert str(Money.of("150.124", "JPY")) == "150.12 JPY"
+        assert str(Money.of("150.125", "JPY")) == "150.13 JPY"
+        assert str(Money.of("10", "USD")) == "10.00 USD"
+
     def test_money_and_quantity_values_reject_primitive_numbers(self) -> None:
         primitive_amount: Any = 10
         primitive_units: Any = 1000

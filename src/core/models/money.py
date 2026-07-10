@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from functools import total_ordering
 from logging import Logger
 from typing import Any, Self
@@ -240,7 +240,8 @@ class Money(DomainModel):
         return self.amount < other.amount
 
     def __str__(self) -> str:
-        return f"{self.amount} {self.currency}"
+        amount = self.amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return f"{amount} {self.currency}"
 
     def _assert_same_currency(self, other: Money) -> None:
         if self.currency != other.currency:
