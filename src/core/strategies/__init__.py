@@ -6,7 +6,8 @@ from core.strategies.execution import (
     StrategyDecisionCode,
     StrategyDecisionReason,
     StrategyEvent,
-    StrategyExecutionReport,
+    StrategyEventRequest,
+    StrategyExecutionResponse,
     TradeSide,
 )
 from core.strategies.models import StrategyParameters, StrategyState
@@ -18,7 +19,8 @@ __all__ = [
     "StrategyDecisionCode",
     "StrategyDecisionReason",
     "StrategyEvent",
-    "StrategyExecutionReport",
+    "StrategyEventRequest",
+    "StrategyExecutionResponse",
     "StrategyParameters",
     "StrategyResult",
     "StrategyState",

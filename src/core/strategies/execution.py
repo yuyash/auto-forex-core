@@ -25,8 +25,8 @@ class StrategyAction(StrEnum):
     """Actions a strategy event can request from the executor."""
 
     HOLD = "hold"
-    OPEN_POSITION = "open_position"
-    CLOSE_POSITION = "close_position"
+    OPEN_TRADE = "open_trade"
+    CLOSE_TRADE = "close_trade"
     CANCEL_ORDER = "cancel_order"
 
 
@@ -60,8 +60,8 @@ class StrategyDecisionReason(DomainModel):
     evidence: Metadata = Field(default_factory=Metadata)
 
 
-class StrategyEvent(Event):
-    """A broker-neutral strategy event emitted by a strategy and executed by an executor."""
+class StrategyEventRequest(Event):
+    """A broker-neutral strategy request emitted by a strategy and sent to an executor."""
 
     type: EventType = EventType.STRATEGY_SIGNAL
     source: EventSource = EventSource.STRATEGY
@@ -88,16 +88,16 @@ class StrategyEvent(Event):
         return normalized
 
     @model_validator(mode="after")
-    def _validate_strategy_event(self) -> StrategyEvent:
-        if self.action in {StrategyAction.OPEN_POSITION, StrategyAction.CLOSE_POSITION}:
+    def _validate_strategy_event(self) -> StrategyEventRequest:
+        if self.action in {StrategyAction.OPEN_TRADE, StrategyAction.CLOSE_TRADE}:
             if self.side is None:
-                msg = f"{self.action.value} strategy event requires side"
+                msg = f"{self.action.value} strategy request requires side"
                 raise ValueError(msg)
             if self.units is None:
-                msg = f"{self.action.value} strategy event requires units"
+                msg = f"{self.action.value} strategy request requires units"
                 raise ValueError(msg)
         _LOGGER.debug(
-            "Validated strategy event %s",
+            "Validated strategy request %s",
             self.id,
             extra={
                 "event_id": str(self.id),
@@ -117,18 +117,18 @@ class StrategyEvent(Event):
     def requires_broker(self) -> bool:
         """Return whether this event should be sent to a broker."""
         return self.action in {
-            StrategyAction.OPEN_POSITION,
-            StrategyAction.CLOSE_POSITION,
+            StrategyAction.OPEN_TRADE,
+            StrategyAction.CLOSE_TRADE,
             StrategyAction.CANCEL_ORDER,
         }
 
 
-class StrategyExecutionReport(Event):
-    """Broker execution result returned to a strategy for state reconciliation."""
+class StrategyExecutionResponse(Event):
+    """Broker execution response returned to a strategy for state reconciliation."""
 
     type: EventType = EventType.ORDER_REQUESTED
     source: EventSource = EventSource.BROKER
-    event: StrategyEvent
+    event: StrategyEventRequest
     order: Order | None = None
     execution_error: str | None = None
     metadata: Metadata = Field(default_factory=Metadata)
@@ -143,26 +143,29 @@ class StrategyExecutionReport(Event):
             return data
 
         normalized = dict(data)
-        if isinstance(strategy_event, StrategyEvent):
+        if isinstance(strategy_event, StrategyEventRequest):
             normalized.setdefault("task_id", strategy_event.task_id)
             normalized.setdefault("timestamp", strategy_event.timestamp)
+            normalized.setdefault("display_id", strategy_event.display_id)
         elif isinstance(strategy_event, dict):
             normalized.setdefault("task_id", strategy_event.get("task_id"))
             normalized.setdefault("timestamp", strategy_event.get("timestamp"))
+            normalized.setdefault("display_id", strategy_event.get("display_id", ""))
         return normalized
 
     @model_validator(mode="after")
-    def _validate_report(self) -> StrategyExecutionReport:
+    def _validate_report(self) -> StrategyExecutionResponse:
         if self.order is not None and self.execution_error is not None:
-            msg = "execution report cannot contain both order and execution_error"
+            msg = "execution response cannot contain both order and execution_error"
             raise ValueError(msg)
         if self.event.requires_broker and self.order is None and self.execution_error is None:
-            msg = "broker event report requires order or execution_error"
+            msg = "broker event response requires order or execution_error"
             raise ValueError(msg)
         report_type = EventType.ORDER_FILLED if self.filled else EventType.ORDER_REQUESTED
         object.__setattr__(self, "type", report_type)
         object.__setattr__(self, "source", EventSource.BROKER)
         object.__setattr__(self, "message_key", report_type.message_key)
+        object.__setattr__(self, "metadata", self._execution_metadata())
         return self
 
     @property
@@ -178,3 +181,106 @@ class StrategyExecutionReport(Event):
     def filled(self) -> bool:
         """Return whether the broker order filled any units."""
         return self.order is not None and self.order.filled_units > 0
+
+    def _execution_metadata(self) -> Metadata:
+        metadata = self.metadata
+        if self.order is None or not self.filled:
+            return metadata
+
+        fill_price = self.order.average_fill_price or self.order.price
+        if fill_price is None:
+            return metadata
+
+        key = self._filled_price_key()
+        if key is None:
+            return metadata
+        return metadata.with_value(key, str(fill_price))
+
+    def _filled_price_key(self) -> str | None:
+        if self.event.action == StrategyAction.OPEN_TRADE:
+            if self._metadata_bool(self.event.metadata.get("is_rebuild", False)):
+                return "filled_rebuild_price"
+            return "filled_entry_price"
+
+        if self.event.action != StrategyAction.CLOSE_TRADE:
+            return None
+
+        close_reason = str(self.event.metadata.get("close_reason", ""))
+        if close_reason in {
+            "take_profit",
+            "counter_take_profit",
+            "layer_initial_take_profit",
+        }:
+            return "filled_take_profit_price"
+        if close_reason == "stop_loss":
+            return "filled_stop_loss_price"
+        return "filled_close_price"
+
+    @staticmethod
+    def _metadata_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() in {"1", "true", "yes"}
+
+
+class StrategyEvent(Event):
+    """Aggregated strategy event combining a request with its execution response."""
+
+    type: EventType = EventType.STRATEGY_SIGNAL
+    source: EventSource = EventSource.SERVER
+    task_id: UUID
+    message_key: EventMessageKey = EventMessageKey.STRATEGY_SIGNAL
+    request: StrategyEventRequest
+    response: StrategyExecutionResponse | None = None
+    action: StrategyAction = StrategyAction.HOLD
+    instrument: CurrencyPair
+    side: TradeSide | None = None
+    units: Decimal | None = Field(default=None, gt=0)
+    price: Money | None = None
+    reason: StrategyDecisionReason = Field(default_factory=StrategyDecisionReason)
+    metadata: Metadata = Field(default_factory=Metadata)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_request_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or data.get("request") is None:
+            return data
+        request = data["request"]
+        response = data.get("response")
+        normalized = dict(data)
+        if isinstance(request, StrategyEventRequest):
+            normalized.setdefault("task_id", request.task_id)
+            normalized.setdefault("timestamp", request.timestamp)
+            normalized.setdefault("display_id", request.display_id)
+            normalized.setdefault("action", request.action)
+            normalized.setdefault("instrument", request.instrument)
+            normalized.setdefault("side", request.side)
+            normalized.setdefault("units", request.units)
+            normalized.setdefault("price", request.price)
+            normalized.setdefault("reason", request.reason)
+            metadata = request.metadata
+            if isinstance(response, StrategyExecutionResponse):
+                metadata = metadata.merge(response.metadata)
+            normalized.setdefault("metadata", metadata)
+        elif isinstance(request, dict):
+            normalized.setdefault("task_id", request.get("task_id"))
+            normalized.setdefault("timestamp", request.get("timestamp"))
+            normalized.setdefault("display_id", request.get("display_id", ""))
+            normalized.setdefault("action", request.get("action", StrategyAction.HOLD))
+            normalized.setdefault("instrument", request.get("instrument"))
+            normalized.setdefault("side", request.get("side"))
+            normalized.setdefault("units", request.get("units"))
+            normalized.setdefault("price", request.get("price"))
+            normalized.setdefault("reason", request.get("reason", {}))
+            metadata = Metadata.model_validate(request.get("metadata", {}))
+            if isinstance(response, StrategyExecutionResponse):
+                metadata = metadata.merge(response.metadata)
+            normalized.setdefault("metadata", metadata)
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_aggregate(self) -> StrategyEvent:
+        if self.response is not None and self.response.event.id != self.request.id:
+            msg = "strategy event response does not belong to request"
+            raise ValueError(msg)
+        return self

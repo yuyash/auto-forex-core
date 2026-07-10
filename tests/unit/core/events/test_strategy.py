@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from core import Order, OrderSide, OrderStatus, StrategyExecutionReport
+from core import Order, OrderSide, OrderStatus, StrategyExecutionResponse
 from core.events import (
     EventMessageKey,
     EventSource,
@@ -13,21 +13,23 @@ from core.strategies import (
     StrategyDecisionCode,
     StrategyDecisionReason,
     StrategyEvent,
+    StrategyEventRequest,
     TradeSide,
 )
 
 
 class TestStrategyEvent:
-    def test_strategy_event_models_decision_trace(self) -> None:
+    def test_strategy_event_request_models_decision_trace(self) -> None:
         task_id = new_uuid()
-        event = StrategyEvent(
+        event = StrategyEventRequest(
             task_id=task_id,
             timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-            action=StrategyAction.OPEN_POSITION,
+            action=StrategyAction.OPEN_TRADE,
             instrument=CurrencyPair.of("USD_JPY"),
             side=TradeSide.BUY,
             units=Decimal("1000"),
             price=Money.of("150.11", "JPY"),
+            display_id="L1R0B1",
             reason=StrategyDecisionReason(
                 code=StrategyDecisionCode.ENTRY_SIGNAL,
                 rule_id="snowball.breakout",
@@ -40,22 +42,24 @@ class TestStrategyEvent:
         assert event.source == EventSource.STRATEGY
         assert event.message_key == EventMessageKey.STRATEGY_SIGNAL
         assert event.task_id == task_id
+        assert event.display_id == "L1R0B1"
         assert event.reason.code == StrategyDecisionCode.ENTRY_SIGNAL
         assert event.reason.evidence == Metadata.of(bid="150.10", ask="150.11")
 
-    def test_strategy_execution_report_is_order_event(self) -> None:
+    def test_strategy_execution_response_is_order_event(self) -> None:
         task_id = new_uuid()
-        event = StrategyEvent(
+        event = StrategyEventRequest(
             task_id=task_id,
             timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-            action=StrategyAction.OPEN_POSITION,
+            action=StrategyAction.OPEN_TRADE,
             instrument=CurrencyPair.of("USD_JPY"),
             side=TradeSide.BUY,
             units=Decimal("1000"),
             price=Money.of("150.11", "JPY"),
+            display_id="L1R0B1",
         )
 
-        report = StrategyExecutionReport(
+        report = StrategyExecutionResponse(
             event=event,
             order=Order(
                 instrument=CurrencyPair.of("USD_JPY"),
@@ -72,3 +76,17 @@ class TestStrategyEvent:
         assert report.message_key == EventMessageKey.ORDER_FILLED
         assert report.task_id == task_id
         assert report.timestamp == event.timestamp
+        assert report.display_id == "L1R0B1"
+        assert report.metadata["filled_entry_price"] == "150.11 JPY"
+
+        aggregate = StrategyEvent(
+            task_id=event.task_id,
+            request=event,
+            response=report,
+            instrument=event.instrument,
+        )
+        assert aggregate.source == EventSource.SERVER
+        assert aggregate.request is event
+        assert aggregate.response is report
+        assert aggregate.action == StrategyAction.OPEN_TRADE
+        assert aggregate.metadata["filled_entry_price"] == "150.11 JPY"

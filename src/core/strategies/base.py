@@ -16,7 +16,7 @@ from core.models.base import DomainModel
 from core.models.metadata import Metadata
 from core.models.money import CurrencyPair
 from core.sources.models import Candle, Tick
-from core.strategies.execution import StrategyEvent, StrategyExecutionReport
+from core.strategies.execution import StrategyEventRequest, StrategyExecutionResponse
 from core.strategies.models import StrategyParameters, StrategyState
 from core.tasks.state import TaskType
 
@@ -69,7 +69,7 @@ class StrategyContext(DomainModel):
 class StrategyResult(DomainModel):
     """Strategy output for a single lifecycle or market-data callback."""
 
-    events: tuple[StrategyEvent, ...] = ()
+    events: tuple[StrategyEventRequest, ...] = ()
     state: StrategyState = Field(default_factory=StrategyState)
 
 
@@ -166,7 +166,7 @@ class Strategy(ABC):
 
     def on_execution_reports(
         self,
-        reports: Sequence[StrategyExecutionReport],
+        reports: Sequence[StrategyExecutionResponse],
         context: StrategyContext,
     ) -> StrategyState:
         """Reconcile broker execution reports into strategy state."""

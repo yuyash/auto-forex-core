@@ -39,6 +39,7 @@ class Event(DomainModel):
     timestamp: AwareDatetime = Field(default_factory=now)
     source: EventSource = EventSource.CORE
     task_id: UUID | None = None
+    display_id: str = ""
     message_key: EventMessageKey = EventMessageKey.NONE
     error: EventError | None = None
     metadata: Metadata = Field(default_factory=Metadata)
@@ -211,6 +212,7 @@ class Event(DomainModel):
             "event_severity": self.severity.value,
             "event_source": self._source_value(),
             "task_id": str(self.task_id or ""),
+            "display_id": self.display_id,
             "message_key": self.message_key.value,
             "is_warning": self.is_warning,
             "is_error": self.is_error,

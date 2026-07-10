@@ -8,7 +8,7 @@ from core import (
     StrategyAction,
     StrategyDecisionCode,
     StrategyDecisionReason,
-    StrategyEvent,
+    StrategyEventRequest,
     StrategyParameters,
     StrategyState,
     Tick,
@@ -21,7 +21,7 @@ class HoldStrategy(Strategy):
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         return StrategyResult(
             events=(
-                StrategyEvent(
+                StrategyEventRequest(
                     task_id=context.task_id,
                     action=StrategyAction.HOLD,
                     instrument=tick.instrument,

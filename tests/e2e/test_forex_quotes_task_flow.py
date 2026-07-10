@@ -20,7 +20,7 @@ from core import (
     StrategyContext,
     StrategyDecisionCode,
     StrategyDecisionReason,
-    StrategyEvent,
+    StrategyEventRequest,
     StrategyParameters,
     StrategyResult,
     TaskStatus,
@@ -82,7 +82,7 @@ class HoldStrategy(Strategy):
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         return StrategyResult(
             events=(
-                StrategyEvent(
+                StrategyEventRequest(
                     task_id=context.task_id,
                     action=StrategyAction.HOLD,
                     instrument=tick.instrument,
@@ -101,7 +101,7 @@ class HoldStrategy(Strategy):
     def on_candle(self, candle: Candle, context: StrategyContext) -> StrategyResult:
         return StrategyResult(
             events=(
-                StrategyEvent(
+                StrategyEventRequest(
                     task_id=context.task_id,
                     action=StrategyAction.HOLD,
                     instrument=candle.instrument,
@@ -256,7 +256,7 @@ def _run_ticks_through_task(
     *,
     source: CSVDataSource | None = None,
     limit: int | None = None,
-) -> tuple[ExecutableTask, tuple[StrategyEvent, ...]]:
+) -> tuple[ExecutableTask, tuple[StrategyEventRequest, ...]]:
     task = ExecutableTask.from_definition(definition).start()
     strategy = HoldStrategy(
         name="hold",
@@ -285,7 +285,7 @@ def _run_candles_through_task(
     *,
     source: CSVDataSource,
     limit: int | None = None,
-) -> tuple[ExecutableTask, tuple[StrategyEvent, ...]]:
+) -> tuple[ExecutableTask, tuple[StrategyEventRequest, ...]]:
     task = ExecutableTask.from_definition(definition).start()
     strategy = HoldStrategy(
         name="hold",

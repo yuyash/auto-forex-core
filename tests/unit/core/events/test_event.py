@@ -24,6 +24,7 @@ class TestEvent:
 
         assert event.id.version == 7
         assert event.source == EventSource.CORE
+        assert event.display_id == ""
         assert event.message_key == EventMessageKey.TASK_STARTED
         assert event.metadata == Metadata()
         assert debug_event.severity == EventSeverity.DEBUG
@@ -34,6 +35,12 @@ class TestEvent:
         event = Event(type=EventType.TASK_STARTED, source=EventSource.SERVER)
 
         assert event.source == EventSource.SERVER
+
+    def test_event_accepts_display_id(self) -> None:
+        event = Event(type=EventType.TASK_STARTED, display_id="L1R0B1")
+
+        assert event.display_id == "L1R0B1"
+        assert event.dump()["display_id"] == "L1R0B1"
 
     def test_warning_retryable_and_fatal_events_have_handling_metadata(self) -> None:
         warning = Event.warning(
