@@ -6,8 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from core.accounts import AccountManager, AccountProvider
-from core.brokers import Broker
+from core.models import AccountProvider
+from core.ports import AccountManager, Broker
 from core.sources import DataSource
 
 

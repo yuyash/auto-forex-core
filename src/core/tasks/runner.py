@@ -8,13 +8,13 @@ from datetime import datetime
 from threading import Event as ThreadEvent
 from uuid import UUID
 
-from core.brokers.base import Broker
 from core.clock import Clock, ManualClock, SystemClock
 from core.events.bus import EventBus
 from core.events.event import Event
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
 from core.orders.executor import StrategyEventExecutor
+from core.ports.brokers import Broker
 from core.sources.base import DataSource
 from core.strategies.base import Strategy, StrategyContext, StrategyResult
 from core.strategies.execution import StrategyEventRequest

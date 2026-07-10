@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from core.accounts.models import Account, AccountId, AccountSummary
+from core.models.accounts import Account, AccountId, AccountSummary
 from core.models.metadata import Metadata
 from core.models.money import CurrencyPair
 from core.models.values import MarginRate

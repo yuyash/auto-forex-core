@@ -9,11 +9,11 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from core.brokers.models import Order, OrderStatus
 from core.events.event import Event
 from core.events.types import EventMessageKey, EventSource, EventType
 from core.logging import get_logger
 from core.models.base import DomainModel
+from core.models.brokers import Order, OrderStatus
 from core.models.metadata import Metadata
 from core.models.money import CurrencyPair, Money
 from core.models.values import Confidence, Units

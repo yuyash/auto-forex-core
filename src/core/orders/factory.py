@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.brokers.models import Order, OrderSide
+from core.models.brokers import Order, OrderSide
 from core.models.metadata import Metadata
 from core.models.values import Units
 from core.strategies.execution import StrategyEventRequest, TradeSide

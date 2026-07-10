@@ -9,12 +9,12 @@ from types import TracebackType
 from typing import Literal, Self
 from uuid import UUID
 
-from core.brokers.base import Broker
 from core.clock import Clock, ManualClock, SystemClock
 from core.events.bus import EventBus
 from core.events.event import Event
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
+from core.ports.brokers import Broker
 from core.sources.base import DataSource
 from core.strategies.base import Strategy
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition

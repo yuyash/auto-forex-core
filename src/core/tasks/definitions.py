@@ -8,9 +8,9 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from core.accounts.models import Account
 from core.clock import now
 from core.logging import get_logger
+from core.models.accounts import Account
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
 from core.models.money import CurrencyPair, Money

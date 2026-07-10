@@ -10,8 +10,8 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, computed_field, field_validator, model_validator
 
-from core.accounts.models import AccountId
 from core.logging import get_logger
+from core.models.accounts import AccountId
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
 from core.models.metadata import Metadata

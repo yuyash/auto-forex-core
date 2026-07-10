@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from core.brokers.models import Order, Position, PositionSide
+from core.models.brokers import Order, Position, PositionSide
 from core.models.money import CurrencyPair
 from core.models.values import Units
 

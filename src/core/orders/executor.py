@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from core.brokers.base import Broker
-from core.brokers.models import Order, OrderSide, OrderStatus, Position, PositionSide
+from core.models.brokers import Order, OrderSide, OrderStatus, Position, PositionSide
 from core.models.metadata import Metadata
 from core.orders.factory import OrderFactory
+from core.ports.brokers import Broker
 from core.strategies.execution import (
     StrategyAction,
     StrategyEventRequest,
