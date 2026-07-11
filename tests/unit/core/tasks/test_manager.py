@@ -315,59 +315,6 @@ def test_task_run_wait_closes_progress_reporter_on_timeout() -> None:
     assert not reporter.finishes
 
 
-def test_task_run_profile_reports_backtest_execution_metrics() -> None:
-    instrument = CurrencyPair.of("USD_JPY")
-    definition = BacktestTaskDefinition(
-        name="Backtest USD_JPY",
-        instrument=instrument,
-        start_at=datetime(2026, 1, 1, tzinfo=UTC),
-        end_at=datetime(2026, 1, 2, tzinfo=UTC),
-    )
-    tick = Tick(
-        instrument=instrument,
-        timestamp=datetime(2026, 1, 1, 12, tzinfo=UTC),
-        bid=Money.of("150.10", "JPY"),
-        ask=Money.of("150.12", "JPY"),
-        metadata=Metadata.of(source="test"),
-    )
-
-    with TaskManager(
-        max_workers=1,
-        profiling=TaskProfilingConfig(enabled=True),
-    ) as manager:
-        run = manager.start_backtest(
-            definition,
-            data_source=OneTickDataSource(tick),
-            strategy=HoldStrategy(name="hold"),
-        )
-        final_task = run.wait(timeout=2)
-        profile = run.profile()
-
-    assert final_task.status == TaskStatus.COMPLETED
-    assert profile.enabled
-    assert profile.counters["tick.count"] == 1
-    assert profile.metric("task.run") is not None
-    assert profile.metric("data_source.next_tick") is not None
-    assert profile.metric("strategy.on_tick") is not None
-    assert profile.metric("pipeline.process_tick_result") is not None
-    profile_df = profile.to_dataframe()
-    assert set(profile_df.columns) == {
-        "name",
-        "count",
-        "total_ms",
-        "avg_ms",
-        "min_ms",
-        "p50_ms",
-        "p90_ms",
-        "p95_ms",
-        "p99_ms",
-        "max_ms",
-        "percent_total",
-    }
-    counter_df = profile.counters_to_dataframe()
-    assert {"name": "tick.count", "count": 1} in counter_df.to_dict(orient="records")
-
-
 def test_task_run_profile_can_write_cprofile_output(tmp_path: Path) -> None:
     instrument = CurrencyPair.of("USD_JPY")
     definition = BacktestTaskDefinition(
@@ -387,7 +334,6 @@ def test_task_run_profile_can_write_cprofile_output(tmp_path: Path) -> None:
     with TaskManager(
         max_workers=1,
         profiling=TaskProfilingConfig(
-            enabled=True,
             cprofile=True,
             cprofile_output_path=tmp_path,
         ),

@@ -51,11 +51,17 @@ class EventSubscription:
 class EventBus:
     """Synchronous in-process event bus with filtering and handler results."""
 
-    def __init__(self, handlers: Iterable[EventHandler] = ()) -> None:
+    def __init__(
+        self,
+        handlers: Iterable[EventHandler] = (),
+        *,
+        record_history: bool = False,
+    ) -> None:
         self._subscriptions = [
             EventSubscription(handler=handler, predicate=lambda _event: True)
             for handler in handlers
         ]
+        self._record_history = record_history
         self._history: list[Event] = []
         self._strategy_requests: dict[UUID, StrategyEventRequest] = {}
         self._lock = RLock()
@@ -108,7 +114,8 @@ class EventBus:
     def _publish_one(self, event: Event) -> EventPublication:
         """Publish a concrete event without deriving aggregate events."""
         with self._lock:
-            self._history.append(event)
+            if self._record_history:
+                self._history.append(event)
             subscriptions = tuple(
                 subscription for subscription in self._subscriptions if subscription.matches(event)
             )
@@ -122,7 +129,8 @@ class EventBus:
                 failure_event = self._handler_failure_event(event, subscription.handler, exc)
                 failure_events.append(failure_event)
                 with self._lock:
-                    self._history.append(failure_event)
+                    if self._record_history:
+                        self._history.append(failure_event)
             else:
                 delivered_count += 1
 
@@ -175,9 +183,10 @@ class EventBus:
         with self._lock:
             return self._strategy_requests.pop(response.event.id, response.event)
 
-    def publish_many(self, events: Iterable[Event]) -> tuple[EventPublication, ...]:
+    def publish_many(self, events: Iterable[Event]) -> None:
         """Publish events in order."""
-        return tuple(self.publish(event) for event in events)
+        for event in events:
+            self.publish(event)
 
     @property
     def pending_strategy_requests(self) -> Sequence[StrategyEventRequest]:
@@ -187,7 +196,7 @@ class EventBus:
 
     @property
     def history(self) -> Sequence[Event]:
-        """Return events published by this bus."""
+        """Return events published by this bus when history recording is enabled."""
         with self._lock:
             return tuple(self._history)
 

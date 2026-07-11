@@ -70,7 +70,7 @@ class StrategyResult(DomainModel):
     """Strategy output for a single lifecycle or market-data callback."""
 
     events: tuple[StrategyEventRequest, ...] = ()
-    state: StrategyState = Field(default_factory=StrategyState)
+    state: StrategyState | None = None
 
 
 class Strategy(ABC):

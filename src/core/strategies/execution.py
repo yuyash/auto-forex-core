@@ -61,7 +61,10 @@ class StrategyDecisionReason(DomainModel):
 
 
 class StrategyEventRequest(Event):
-    """A broker-neutral strategy request emitted by a strategy and sent to an executor."""
+    """A broker-neutral strategy request emitted by a strategy and sent to an executor.
+
+    The emitting strategy owns the event timestamp; task runners never rewrite it.
+    """
 
     type: EventType = EventType.STRATEGY_SIGNAL
     source: EventSource = EventSource.STRATEGY

@@ -124,7 +124,7 @@ class CurrencyPair(DomainModel):
     @property
     def pip_size(self) -> Decimal:
         """Return the default FX pip size for this currency pair."""
-        if self.quote == Currency.of("JPY"):
+        if self.quote.code == "JPY":
             return Decimal("0.01")
         return Decimal("0.0001")
 

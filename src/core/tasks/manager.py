@@ -24,7 +24,7 @@ from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
 from core.tasks.profiling import TaskProfile, TaskProfiler, TaskProfilingConfig
 from core.tasks.progress import TaskProgress, TaskProgressReporter
-from core.tasks.repository import InMemoryTaskRepository, TaskRepository
+from core.tasks.registry import InMemoryTaskRegistry, TaskRegistry
 from core.tasks.runner import BacktestRunner, TaskExecutionControl, TradingRunner
 from core.tasks.state import TaskAction, TaskStatus
 
@@ -110,12 +110,12 @@ class TaskManager:
     def __init__(
         self,
         *,
-        repository: TaskRepository | None = None,
+        registry: TaskRegistry | None = None,
         event_bus: EventBus | None = None,
         profiling: TaskProfilingConfig | None = None,
         max_workers: int = 4,
     ) -> None:
-        self.repository = repository or InMemoryTaskRepository()
+        self.registry = registry or InMemoryTaskRegistry()
         self.event_bus = event_bus or EventBus()
         self.profiling = profiling or TaskProfilingConfig()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -150,7 +150,7 @@ class TaskManager:
         """Start a backtest task in the background."""
         clock = ManualClock(definition.start_at)
         started = ExecutableTask.from_definition(definition, clock=clock).start(clock=clock)
-        self.repository.save(started)
+        self.registry.save(started)
         self._launch(
             started,
             type="backtest",
@@ -177,7 +177,7 @@ class TaskManager:
             raise ValueError(msg)
         clock = SystemClock()
         started = ExecutableTask.from_definition(definition, clock=clock).start(clock=clock)
-        self.repository.save(started)
+        self.registry.save(started)
         self._launch(
             started,
             type="trading",
@@ -191,15 +191,15 @@ class TaskManager:
 
     def get(self, task_id: UUID) -> Task:
         """Return the latest task state."""
-        return self.repository.get(task_id)
+        return self.registry.get(task_id)
 
     def pause(self, task_id: UUID) -> Task:
         """Request a graceful task pause."""
         runtime = self._runtime(task_id)
         runtime.control.request_pause()
-        task = self.repository.get(task_id)
+        task = self.registry.get(task_id)
         if task.can(TaskAction.PAUSE):
-            paused = self.repository.save(task.pause(clock=runtime.clock))
+            paused = self.registry.save(task.pause(clock=runtime.clock))
             self._publish_task_event(EventType.TASK_PAUSED, paused, clock=runtime.clock)
             return paused
         return task
@@ -208,9 +208,9 @@ class TaskManager:
         """Request a graceful task stop."""
         runtime = self._runtime(task_id)
         runtime.control.request_stop()
-        task = self.repository.get(task_id)
+        task = self.registry.get(task_id)
         if task.can(TaskAction.STOP):
-            stopped = self.repository.save(task.stop(clock=runtime.clock))
+            stopped = self.registry.save(task.stop(clock=runtime.clock))
             self._publish_task_event(EventType.TASK_STOPPED, stopped, clock=runtime.clock)
             return stopped
         return task
@@ -222,9 +222,9 @@ class TaskManager:
             runtime.control.request_stop()
             runtime.future.result(timeout=timeout)
 
-        current_task = self.repository.get(task_id)
+        current_task = self.registry.get(task_id)
         clock = self._clock_for_task(current_task, runtime.type)
-        restarted = self.repository.save(current_task.restart(clock=clock))
+        restarted = self.registry.save(current_task.restart(clock=clock))
         self._launch(
             restarted,
             type=runtime.type,
@@ -248,7 +248,7 @@ class TaskManager:
         runtime = self._runtime(task_id)
         if progress is None:
             runtime.future.result(timeout=timeout)
-            return self.repository.get(task_id)
+            return self.registry.get(task_id)
         return self._wait_with_progress(
             task_id,
             runtime=runtime,
@@ -260,7 +260,7 @@ class TaskManager:
     def progress(self, task_id: UUID) -> TaskProgress:
         """Return a point-in-time progress snapshot for the task run."""
         runtime = self._runtime(task_id)
-        task = self.repository.get(task_id)
+        task = self.registry.get(task_id)
         current_at = runtime.clock.now()
         if isinstance(task.definition, BacktestTaskDefinition):
             return self._backtest_progress(task, current_at=current_at)
@@ -303,7 +303,7 @@ class TaskManager:
         with self._lock:
             current = self._runtimes.get(task.id)
             if current is not None and not current.future.done():
-                current_task = self.repository.get(task.id)
+                current_task = self.registry.get(task.id)
                 if self._is_active_task(current_task):
                     msg = f"task already has an active runner: {task.id}"
                     raise TaskAlreadyRunningError(msg)
@@ -352,7 +352,7 @@ class TaskManager:
                 strategy=strategy,
                 broker=broker,
                 event_bus=self.event_bus,
-                repository=self.repository,
+                registry=self.registry,
                 clock=clock,
                 profiler=profiler,
             )
@@ -366,7 +366,7 @@ class TaskManager:
             strategy=strategy,
             broker=broker,
             event_bus=self.event_bus,
-            repository=self.repository,
+            registry=self.registry,
             clock=clock,
             profiler=profiler,
         )
@@ -395,7 +395,7 @@ class TaskManager:
             while True:
                 if runtime.future.done():
                     runtime.future.result(timeout=0)
-                    task = self.repository.get(task_id)
+                    task = self.registry.get(task_id)
                     progress.on_finish(self.progress(task_id))
                     finished = True
                     return task
@@ -410,7 +410,7 @@ class TaskManager:
                     progress.on_update(self.progress(task_id))
                     continue
 
-                task = self.repository.get(task_id)
+                task = self.registry.get(task_id)
                 progress.on_finish(self.progress(task_id))
                 finished = True
                 return task

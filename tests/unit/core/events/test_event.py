@@ -38,10 +38,10 @@ class TestEvent:
         assert event.source == EventSource.SERVER
 
     def test_event_accepts_display_id(self) -> None:
-        event = Event(type=EventType.TASK_STARTED, display_id="L1R0B1")
+        event = Event(type=EventType.TASK_STARTED, display_id="C1L1R0B1")
 
-        assert event.display_id == "L1R0B1"
-        assert event.dump()["display_id"] == "L1R0B1"
+        assert event.display_id == "C1L1R0B1"
+        assert event.dump()["display_id"] == "C1L1R0B1"
 
     def test_warning_retryable_and_fatal_events_have_handling_metadata(self) -> None:
         warning = Event.warning(

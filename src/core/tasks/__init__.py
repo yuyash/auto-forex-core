@@ -12,12 +12,12 @@ from core.tasks.definitions import (
 )
 from core.tasks.execution import ExecutableTask
 from core.tasks.failure import TaskFailure
-from core.tasks.profiling import TaskProfile, TaskProfileMetric, TaskProfiler, TaskProfilingConfig
+from core.tasks.profiling import TaskProfile, TaskProfiler, TaskProfilingConfig
 from core.tasks.progress import TaskProgress, TaskProgressReporter, TqdmProgressReporter
-from core.tasks.repository import (
-    InMemoryTaskRepository,
+from core.tasks.registry import (
+    InMemoryTaskRegistry,
     TaskNotFoundError,
-    TaskRepository,
+    TaskRegistry,
 )
 from core.tasks.state import (
     ALLOWED_TRANSITIONS,
@@ -36,7 +36,7 @@ __all__ = [
     "BacktestTaskDefinition",
     "BaseTaskDefinition",
     "ExecutableTask",
-    "InMemoryTaskRepository",
+    "InMemoryTaskRegistry",
     "TaskAction",
     "TaskAlreadyRunningError",
     "TaskDefinition",
@@ -45,12 +45,11 @@ __all__ = [
     "TaskManager",
     "TaskNotFoundError",
     "TaskProfile",
-    "TaskProfileMetric",
     "TaskProfiler",
     "TaskProfilingConfig",
     "TaskProgress",
     "TaskProgressReporter",
-    "TaskRepository",
+    "TaskRegistry",
     "TaskRun",
     "TaskRuntime",
     "TaskStateError",

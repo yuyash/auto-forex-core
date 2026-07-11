@@ -28,7 +28,7 @@ class TestStrategyEvent:
             side=TradeSide.BUY,
             units=Units("1000"),
             price=Money.of("150.11", "JPY"),
-            display_id="L1R0B1",
+            display_id="C1L1R0B1",
             reason=StrategyDecisionReason(
                 code=StrategyDecisionCode.ENTRY_SIGNAL,
                 rule_id="snowball.breakout",
@@ -41,7 +41,7 @@ class TestStrategyEvent:
         assert event.source == EventSource.STRATEGY
         assert event.message_key == EventMessageKey.STRATEGY_SIGNAL
         assert event.task_id == task_id
-        assert event.display_id == "L1R0B1"
+        assert event.display_id == "C1L1R0B1"
         assert event.reason.code == StrategyDecisionCode.ENTRY_SIGNAL
         assert event.reason.evidence == Metadata.of(bid="150.10", ask="150.11")
 
@@ -55,7 +55,7 @@ class TestStrategyEvent:
             side=TradeSide.BUY,
             units=Units("1000"),
             price=Money.of("150.11", "JPY"),
-            display_id="L1R0B1",
+            display_id="C1L1R0B1",
         )
 
         report = StrategyExecutionResponse(
@@ -75,7 +75,7 @@ class TestStrategyEvent:
         assert report.message_key == EventMessageKey.ORDER_FILLED
         assert report.task_id == task_id
         assert report.timestamp == event.timestamp
-        assert report.display_id == "L1R0B1"
+        assert report.display_id == "C1L1R0B1"
         assert report.metadata["filled_entry_price"] == "150.11 JPY"
 
         aggregate = StrategyEvent(
@@ -102,7 +102,7 @@ class TestStrategyEvent:
             side=TradeSide.BUY,
             units=Units("1000"),
             price=Money.of("149.92", "JPY"),
-            display_id="L1R0B2",
+            display_id="C1L1R0B2",
             metadata=Metadata.of(is_rebuild=True),
         )
 

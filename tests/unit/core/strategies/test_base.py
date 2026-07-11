@@ -22,6 +22,7 @@ class HoldStrategy(Strategy):
         return StrategyResult(
             events=(
                 StrategyEventRequest(
+                    timestamp=tick.timestamp,
                     task_id=context.task_id,
                     action=StrategyAction.HOLD,
                     instrument=tick.instrument,

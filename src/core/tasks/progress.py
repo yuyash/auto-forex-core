@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -66,10 +66,14 @@ class TqdmProgressReporter:
         *,
         tqdm_factory: Callable[..., Any] | None = None,
         description: str | None = None,
+        current_time_format: str = "%Y-%m-%d %H:%M:%S %Z",
+        current_time_zone: tzinfo | None = None,
         **options: Any,
     ) -> None:
         self._tqdm_factory = tqdm_factory
         self._description = description
+        self._current_time_format = current_time_format
+        self._current_time_zone = current_time_zone
         self._options = options
         self._bar: Any | None = None
         self._completed_units = 0.0
@@ -80,6 +84,7 @@ class TqdmProgressReporter:
             return
         options = dict(self._options)
         options.setdefault("desc", self._description or progress.task_name)
+        options.setdefault("bar_format", self._bar_format(progress))
         self._bar = self._resolve_tqdm_factory()(
             total=progress.total_units,
             unit=progress.unit,
@@ -116,8 +121,22 @@ class TqdmProgressReporter:
             completed_units = max(self._completed_units, progress.completed_units)
             self._bar.update(completed_units - self._completed_units)
             self._completed_units = completed_units
-        self._bar.set_postfix(status=progress.status.value)
+        self._bar.set_postfix_str(
+            f"current={self._format_current_at(progress)}, status={progress.status.value}"
+        )
         self._bar.refresh()
+
+    @staticmethod
+    def _bar_format(progress: TaskProgress) -> str:
+        if progress.total_units is None:
+            return "{desc}: {postfix} [{elapsed}, {rate_fmt}]"
+        return "{l_bar}{bar}| {postfix} [{elapsed}<{remaining}, {rate_fmt}]"
+
+    def _format_current_at(self, progress: TaskProgress) -> str:
+        if progress.current_at is None:
+            return "-"
+        current_at = progress.current_at.astimezone(self._current_time_zone)
+        return current_at.strftime(self._current_time_format).strip()
 
     def _resolve_tqdm_factory(self) -> Callable[..., Any]:
         if self._tqdm_factory is not None:

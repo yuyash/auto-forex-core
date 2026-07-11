@@ -1,4 +1,4 @@
-"""Task repositories used by local task managers and runners."""
+"""Task registries used by local task managers and runners."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ type Task = ExecutableTask
 
 
 class TaskNotFoundError(KeyError):
-    """Raised when a task does not exist in the repository."""
+    """Raised when a task does not exist in the registry."""
 
 
-class TaskRepository(Protocol):
-    """Storage boundary for task state."""
+class TaskRegistry(Protocol):
+    """Storage boundary for task records and lifecycle state."""
 
     def save(self, task: Task) -> Task:
         """Persist and return a task."""
@@ -30,8 +30,8 @@ class TaskRepository(Protocol):
         """Return tasks, optionally filtered by status."""
 
 
-class InMemoryTaskRepository:
-    """Thread-safe in-memory task repository for local execution and tests."""
+class InMemoryTaskRegistry:
+    """Thread-safe in-memory task registry for local execution and tests."""
 
     def __init__(self, tasks: Iterable[Task] = ()) -> None:
         self._tasks: dict[UUID, Task] = {}
