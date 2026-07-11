@@ -5,8 +5,10 @@ from __future__ import annotations
 import cProfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 from typing import Protocol, TypeVar
 from uuid import UUID
 
@@ -18,7 +20,7 @@ class _PyinstrumentProfiler(Protocol):
 
     def stop(self) -> object: ...
 
-    def output_html(self) -> str: ...
+    def output_html(self, resample_interval: float | None = None) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +31,35 @@ class TaskProfilingConfig:
     cprofile_output_path: Path | None = None
     pyinstrument: bool = False
     pyinstrument_output_path: Path | None = None
+    pyinstrument_resample_interval: timedelta | None = None
+    pyinstrument_target_html_samples: int = 10_000
+
+    @classmethod
+    def for_backtest_period(
+        cls,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        cprofile: bool = False,
+        cprofile_output_path: Path | None = None,
+        pyinstrument: bool = False,
+        pyinstrument_output_path: Path | None = None,
+    ) -> TaskProfilingConfig:
+        """Return profiling settings scaled for a backtest date range."""
+        duration = end_at - start_at
+        if duration <= timedelta(days=7):
+            target_html_samples = 20_000
+        elif duration <= timedelta(days=31):
+            target_html_samples = 10_000
+        else:
+            target_html_samples = 5_000
+        return cls(
+            cprofile=cprofile,
+            cprofile_output_path=cprofile_output_path,
+            pyinstrument=pyinstrument,
+            pyinstrument_output_path=pyinstrument_output_path,
+            pyinstrument_target_html_samples=target_html_samples,
+        )
 
     @property
     def active(self) -> bool:
@@ -78,6 +109,7 @@ class TaskProfiler:
 
         profiler = cProfile.Profile() if self.config.cprofile else None
         pyinstrument_profiler = self._pyinstrument_profiler() if self.config.pyinstrument else None
+        started_at = perf_counter()
         try:
             if profiler is not None:
                 profiler.enable()
@@ -92,7 +124,10 @@ class TaskProfiler:
             if profiler is not None:
                 self._dump_cprofile(profiler)
             if pyinstrument_profiler is not None:
-                self._dump_pyinstrument(pyinstrument_profiler)
+                self._dump_pyinstrument(
+                    pyinstrument_profiler,
+                    elapsed_seconds=perf_counter() - started_at,
+                )
 
     def snapshot(self) -> TaskProfile:
         """Return the current profile snapshot."""
@@ -132,13 +167,25 @@ class TaskProfiler:
             raise RuntimeError(msg) from exc
         return Profiler()
 
-    def _dump_pyinstrument(self, profiler: _PyinstrumentProfiler) -> None:
+    def _dump_pyinstrument(
+        self,
+        profiler: _PyinstrumentProfiler,
+        *,
+        elapsed_seconds: float,
+    ) -> None:
         output_path = self._resolved_pyinstrument_output_path()
         if output_path is None:
             return
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_html = profiler.output_html
-        output_path.write_text(output_html(), encoding="utf-8")
+        output_path.write_text(
+            output_html(
+                resample_interval=self._pyinstrument_resample_interval_seconds(
+                    elapsed_seconds=elapsed_seconds,
+                )
+            ),
+            encoding="utf-8",
+        )
         with self._lock:
             self._pyinstrument_output_path = output_path
 
@@ -149,3 +196,19 @@ class TaskProfiler:
         if path.suffix:
             return path
         return path / f"{self.task_id}.html"
+
+    def _pyinstrument_resample_interval_seconds(self, *, elapsed_seconds: float) -> float | None:
+        interval = self.config.pyinstrument_resample_interval
+        if interval is None:
+            target_html_samples = self.config.pyinstrument_target_html_samples
+            if target_html_samples <= 0:
+                msg = "pyinstrument_target_html_samples must be greater than zero"
+                raise ValueError(msg)
+            if elapsed_seconds <= 0:
+                return None
+            return elapsed_seconds / target_html_samples
+        seconds = interval.total_seconds()
+        if seconds <= 0:
+            msg = "pyinstrument_resample_interval must be greater than zero"
+            raise ValueError(msg)
+        return seconds

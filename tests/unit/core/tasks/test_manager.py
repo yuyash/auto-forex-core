@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Iterable
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event as ThreadEvent
 from threading import Timer
@@ -77,6 +77,7 @@ class FakePyinstrumentProfiler:
     def __init__(self) -> None:
         self.started = False
         self.stopped = False
+        self.resample_interval: float | None = None
 
     def start(self) -> None:
         self.started = True
@@ -84,10 +85,11 @@ class FakePyinstrumentProfiler:
     def stop(self) -> None:
         self.stopped = True
 
-    def output_html(self) -> str:
+    def output_html(self, resample_interval: float | None = None) -> str:
         assert self.started
         assert self.stopped
-        return "<html><body>profile</body></html>"
+        self.resample_interval = resample_interval
+        return f"<html><body>profile {resample_interval}</body></html>"
 
 
 class TwoTickBlockingDataSource(DataSource):
@@ -123,6 +125,21 @@ class TwoTickBlockingDataSource(DataSource):
         yield self.second_tick
 
 
+class FailingDataSource(DataSource):
+    def _raw_ticks(
+        self,
+        *,
+        instrument: CurrencyPair,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> Iterable[Tick]:
+        _ = instrument
+        _ = start_at
+        _ = end_at
+        msg = "source failed"
+        raise RuntimeError(msg)
+
+
 def test_task_manager_start_backtest_returns_task_run_handle() -> None:
     instrument = CurrencyPair.of("USD_JPY")
     definition = BacktestTaskDefinition(
@@ -151,6 +168,31 @@ def test_task_manager_start_backtest_returns_task_run_handle() -> None:
     assert run.current().status == TaskStatus.COMPLETED
     assert final_task.id == run.id
     assert final_task.status == TaskStatus.COMPLETED
+
+
+def test_task_manager_preserves_failure_exception_details() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+
+    with TaskManager(max_workers=1) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=FailingDataSource(),
+            strategy=HoldStrategy(name="hold"),
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.FAILED
+    assert final_task.failure is not None
+    assert final_task.failure.message == "source failed"
+    assert final_task.failure.cause_type == "RuntimeError"
+    assert "_raw_ticks" in final_task.failure.traceback
+    assert "RuntimeError: source failed" in final_task.failure.traceback
 
 
 def test_task_run_progress_reports_backtest_clock_position() -> None:
@@ -379,6 +421,7 @@ def test_task_run_profile_can_write_pyinstrument_output(
         profiling=TaskProfilingConfig(
             pyinstrument=True,
             pyinstrument_output_path=tmp_path,
+            pyinstrument_resample_interval=timedelta(milliseconds=250),
         ),
     ) as manager:
         run = manager.start_backtest(
@@ -392,5 +435,32 @@ def test_task_run_profile_can_write_pyinstrument_output(
     assert final_task.status == TaskStatus.COMPLETED
     assert profile.pyinstrument_output_path == tmp_path / f"{run.id}.html"
     assert profile.pyinstrument_output_path.read_text(encoding="utf-8") == (
-        "<html><body>profile</body></html>"
+        "<html><body>profile 0.25</body></html>"
     )
+
+
+def test_task_profiling_config_scales_pyinstrument_samples_for_backtest_period(
+    tmp_path: Path,
+) -> None:
+    short = TaskProfilingConfig.for_backtest_period(
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 3, tzinfo=UTC),
+        pyinstrument=True,
+        pyinstrument_output_path=tmp_path,
+    )
+    month = TaskProfilingConfig.for_backtest_period(
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 31, tzinfo=UTC),
+        pyinstrument=True,
+        pyinstrument_output_path=tmp_path,
+    )
+    long = TaskProfilingConfig.for_backtest_period(
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 3, 31, tzinfo=UTC),
+        pyinstrument=True,
+        pyinstrument_output_path=tmp_path,
+    )
+
+    assert short.pyinstrument_target_html_samples == 20_000
+    assert month.pyinstrument_target_html_samples == 10_000
+    assert long.pyinstrument_target_html_samples == 5_000

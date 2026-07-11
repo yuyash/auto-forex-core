@@ -12,6 +12,7 @@ from core.tasks.definitions import (
 )
 from core.tasks.execution import ExecutableTask
 from core.tasks.failure import TaskFailure
+from core.tasks.observers import TaskObserver
 from core.tasks.profiling import TaskProfile, TaskProfiler, TaskProfilingConfig
 from core.tasks.progress import TaskProgress, TaskProgressReporter, TqdmProgressReporter
 from core.tasks.registry import (
@@ -44,6 +45,7 @@ __all__ = [
     "TaskFailure",
     "TaskManager",
     "TaskNotFoundError",
+    "TaskObserver",
     "TaskProfile",
     "TaskProfiler",
     "TaskProfilingConfig",

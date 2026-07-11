@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Event as ThreadEvent
@@ -16,9 +17,12 @@ from core.models.metadata import Metadata
 from core.orders.executor import StrategyEventExecutor
 from core.ports.brokers import Broker
 from core.sources.base import DataSource
+from core.sources.models import Tick
 from core.strategies.base import Strategy, StrategyContext, StrategyResult
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
+from core.tasks.failure import TaskFailure
+from core.tasks.observers import TaskObserver
 from core.tasks.profiling import TaskProfiler
 from core.tasks.registry import TaskRegistry
 from core.tasks.state import TaskAction
@@ -100,15 +104,20 @@ class TaskLifecycle:
             self.publish_task_event(EventType.TASK_COMPLETED, task)
         return task
 
-    def fail_current(self, reason: str) -> Task:
+    def fail_current(self, reason: str | TaskFailure | BaseException) -> Task:
         """Fail the current task when the transition is allowed."""
         task = self.registry.get(self.task_id)
         if task.can(TaskAction.FAIL):
             task = self.registry.save(task.fail(reason, clock=self.clock))
+            failure = task.failure
             self.publish_task_event(
                 EventType.TASK_FAILED,
                 task,
-                metadata=Metadata.of(reason=reason),
+                metadata=Metadata.of(
+                    reason="" if failure is None else failure.message,
+                    cause_type="" if failure is None else failure.cause_type,
+                    traceback="" if failure is None else failure.traceback,
+                ),
             )
         return task
 
@@ -199,12 +208,14 @@ class TaskRunner(ABC):
         broker: Broker | None = None,
         clock: Clock | None = None,
         profiler: TaskProfiler | None = None,
+        observers: Sequence[TaskObserver] = (),
     ) -> None:
         self.task = task
         self.data_source = data_source
         self.strategy = strategy
         self.event_bus = event_bus
         self.registry = registry
+        self.observers = tuple(observers)
         self.clock = clock or SystemClock()
         self.profiler = profiler or TaskProfiler(
             task_id=task.id,
@@ -235,6 +246,39 @@ class TaskRunner(ABC):
         if isinstance(task.definition, TradingTaskDefinition):
             return task.definition.dry_run
         return broker is None
+
+    def _notify_tick(self, task: Task, tick: Tick) -> None:
+        for observer in self.observers:
+            try:
+                observer.on_tick(task, tick)
+            except Exception as exc:
+                self._publish_observer_error(observer, exc)
+
+    def _notify_finished(self, task: Task) -> Task:
+        if not task.is_terminal:
+            return task
+        for observer in self.observers:
+            try:
+                observer.on_task_finished(task)
+            except Exception as exc:
+                self._publish_observer_error(observer, exc)
+        return task
+
+    def _publish_observer_error(self, observer: TaskObserver, exc: Exception) -> None:
+        observer_type = f"{observer.__class__.__module__}.{observer.__class__.__qualname__}"
+        self.event_bus.publish(
+            Event(
+                type=EventType.ERROR_OCCURRED,
+                timestamp=self.clock.now(),
+                task_id=self.task.id,
+                source=EventSource.CORE,
+                metadata=Metadata.of(
+                    observer_type=observer_type,
+                    exception_type=exc.__class__.__name__,
+                    exception_message=str(exc),
+                ),
+            )
+        )
 
 
 class BacktestRunner(TaskRunner):
@@ -273,19 +317,20 @@ class BacktestRunner(TaskRunner):
                     return paused
                 if execution_control.stop_requested:
                     stopped = self.lifecycle.stop_current()
-                    return stopped
+                    return self._notify_finished(stopped)
 
                 tick_result = self.strategy.on_tick(tick, context)
                 context = self.pipeline.process_result(tick_result, context)
+                self._notify_tick(task, tick)
 
             self._set_clock(definition.end_at)
             stop_result = self.strategy.on_stop(context)
             context = self.pipeline.process_result(stop_result, context)
             completed = self.lifecycle.complete_current()
-            return completed
+            return self._notify_finished(completed)
         except Exception as exc:
-            failed = self.lifecycle.fail_current(str(exc))
-            return failed
+            failed = self.lifecycle.fail_current(exc)
+            return self._notify_finished(failed)
 
     def _ensure_manual_clock(self, start_at: datetime) -> None:
         if isinstance(self.clock, SystemClock):
@@ -321,15 +366,16 @@ class TradingRunner(TaskRunner):
                     return paused
                 if execution_control.stop_requested:
                     stopped = self.lifecycle.stop_current()
-                    return stopped
+                    return self._notify_finished(stopped)
 
                 tick_result = self.strategy.on_tick(tick, context)
                 context = self.pipeline.process_result(tick_result, context)
+                self._notify_tick(task, tick)
 
             stop_result = self.strategy.on_stop(context)
             context = self.pipeline.process_result(stop_result, context)
             stopped = self.lifecycle.stop_current()
-            return stopped
+            return self._notify_finished(stopped)
         except Exception as exc:
-            failed = self.lifecycle.fail_current(str(exc))
-            return failed
+            failed = self.lifecycle.fail_current(exc)
+            return self._notify_finished(failed)

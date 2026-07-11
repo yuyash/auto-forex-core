@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from typing import Literal, Self, cast
 from uuid import UUID
 
 from core.clock import Clock, ManualClock, SystemClock
-from core.events.bus import EventBus
+from core.events.bus import EventBus, EventHandler
 from core.events.event import Event
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
@@ -22,6 +23,7 @@ from core.sources.base import DataSource
 from core.strategies.base import Strategy
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
+from core.tasks.observers import TaskObserver
 from core.tasks.profiling import TaskProfile, TaskProfiler, TaskProfilingConfig
 from core.tasks.progress import TaskProgress, TaskProgressReporter
 from core.tasks.registry import InMemoryTaskRegistry, TaskRegistry
@@ -113,11 +115,16 @@ class TaskManager:
         registry: TaskRegistry | None = None,
         event_bus: EventBus | None = None,
         profiling: TaskProfilingConfig | None = None,
+        observers: Iterable[TaskObserver] = (),
         max_workers: int = 4,
     ) -> None:
         self.registry = registry or InMemoryTaskRegistry()
         self.event_bus = event_bus or EventBus()
         self.profiling = profiling or TaskProfilingConfig()
+        self.observers = tuple(observers)
+        for observer in self.observers:
+            if hasattr(observer, "handle"):
+                self.event_bus.subscribe(cast(EventHandler, observer))
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._runtimes: dict[UUID, TaskRuntime] = {}
         self._lock = RLock()
@@ -355,6 +362,7 @@ class TaskManager:
                 registry=self.registry,
                 clock=clock,
                 profiler=profiler,
+                observers=self.observers,
             )
 
         if not isinstance(task.definition, TradingTaskDefinition):
@@ -369,6 +377,7 @@ class TaskManager:
             registry=self.registry,
             clock=clock,
             profiler=profiler,
+            observers=self.observers,
         )
 
     def _runtime(self, task_id: UUID) -> TaskRuntime:
