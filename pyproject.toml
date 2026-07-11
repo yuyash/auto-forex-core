@@ -9,6 +9,12 @@ dependencies = [
     "pandas>=3.0.3",
     "pycountry>=26.2.16",
     "pydantic>=2.13.4",
+    "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+profiling = [
+    "pyinstrument>=5.1.1",
 ]
 
 [build-system]

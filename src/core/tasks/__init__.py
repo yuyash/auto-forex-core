@@ -12,6 +12,8 @@ from core.tasks.definitions import (
 )
 from core.tasks.execution import ExecutableTask
 from core.tasks.failure import TaskFailure
+from core.tasks.profiling import TaskProfile, TaskProfileMetric, TaskProfiler, TaskProfilingConfig
+from core.tasks.progress import TaskProgress, TaskProgressReporter, TqdmProgressReporter
 from core.tasks.repository import (
     InMemoryTaskRepository,
     TaskNotFoundError,
@@ -42,6 +44,12 @@ __all__ = [
     "TaskFailure",
     "TaskManager",
     "TaskNotFoundError",
+    "TaskProfile",
+    "TaskProfileMetric",
+    "TaskProfiler",
+    "TaskProfilingConfig",
+    "TaskProgress",
+    "TaskProgressReporter",
     "TaskRepository",
     "TaskRun",
     "TaskRuntime",
@@ -50,6 +58,7 @@ __all__ = [
     "TaskStatus",
     "TaskTransition",
     "TaskType",
+    "TqdmProgressReporter",
     "TradingRunner",
     "TradingTaskDefinition",
 ]

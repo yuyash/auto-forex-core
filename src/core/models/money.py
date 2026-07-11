@@ -178,6 +178,15 @@ class Money(DomainModel):
             return cls.model_validate(value).require_currency(expected_currency)
         return cls.of(value, expected_currency)
 
+    @classmethod
+    def coerce_positive(
+        cls,
+        value: Money | Decimal | str | Mapping[str, Any],
+        currency: Currency | str,
+    ) -> Money:
+        """Coerce a raw amount or Money into a positive Money value."""
+        return cls.coerce(value, currency).require_positive()
+
     @staticmethod
     def _reject_primitive_amount(value: Any) -> None:
         if isinstance(value, bool | int | float):

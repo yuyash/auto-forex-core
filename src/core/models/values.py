@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, ClassVar, Self
 
@@ -23,6 +24,14 @@ class DecimalValue(Decimal):
     def of(cls, value: DecimalValue | Decimal | str) -> Self:
         """Coerce a raw number into this value object."""
         return cls._validate(value)
+
+    @classmethod
+    def tuple_of(cls, values: Sequence[DecimalValue | Decimal | str]) -> tuple[Self, ...]:
+        """Coerce raw numbers into a tuple of this value object."""
+        if not isinstance(values, Sequence) or isinstance(values, str | bytes | bytearray):
+            msg = f"{cls.label} values must be provided as a sequence"
+            raise TypeError(msg)
+        return tuple(cls.of(value) for value in values)
 
     @classmethod
     def _validate(cls, value: Any) -> Self:

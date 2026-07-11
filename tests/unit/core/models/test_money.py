@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from core.models import Currency, CurrencyPair, Money, Units
+from core.models import Currency, CurrencyPair, Money, Pips, Units
 
 
 class TestMoney:
@@ -37,9 +37,17 @@ class TestMoney:
 
         assert money == Money.of("12.50", "USD")
         assert Money.coerce("12.50", "USD") == money
+        assert Money.coerce_positive("12.50", "USD") == money
         assert Money.coerce(money, "USD") == money
         with pytest.raises(ValueError, match="currency mismatch"):
             Money.coerce(money, "JPY")
+        with pytest.raises(ValueError, match="greater than 0"):
+            Money.coerce_positive("0", "USD")
+
+    def test_decimal_value_tuple_of_coerces_sequences(self) -> None:
+        assert Pips.tuple_of(("1", Decimal("2"))) == (Pips("1"), Pips("2"))
+        with pytest.raises(TypeError, match="sequence"):
+            Pips.tuple_of("1,2")
 
     def test_money_string_displays_amount_rounded_to_two_decimal_places(self) -> None:
         assert str(Money.of("150.124", "JPY")) == "150.12 JPY"
