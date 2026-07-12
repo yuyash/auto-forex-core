@@ -138,9 +138,11 @@ from core.tasks import (
     TqdmProgressReporter,
     TradingTaskDefinition,
 )
-from core.tasks.manager import (
+from core.tasks.management import (
     StrategyAlreadyRunningError,
     TaskAlreadyRunningError,
+)
+from core.tasks.manager import (
     TaskManager,
     TaskRun,
 )

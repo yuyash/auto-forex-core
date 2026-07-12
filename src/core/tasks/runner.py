@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Event as ThreadEvent
+from typing import Literal
 from uuid import UUID
 
 from core.clock import Clock, ManualClock, SystemClock
@@ -17,6 +18,7 @@ from core.models.metadata import Metadata
 from core.orders.executor import StrategyEventExecutor
 from core.ports.brokers import Broker
 from core.sources.base import DataSource
+from core.sources.models import Tick
 from core.strategies.base import Strategy, StrategyContext, StrategyResult
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
@@ -195,6 +197,96 @@ class StrategyExecutionPipeline:
         return execution_context.with_state(state)
 
 
+type TerminalMode = Literal["complete", "stop"]
+
+
+@dataclass(frozen=True, slots=True)
+class TaskTickStep:
+    """Result of processing one task tick."""
+
+    task: Task
+    context: StrategyContext
+    terminal_task: Task | None = None
+    finish_terminal: bool = False
+
+
+class TaskStrategyDriver:
+    """Drive strategy callbacks for task start, tick, and stop phases."""
+
+    def __init__(
+        self,
+        *,
+        strategy: Strategy,
+        pipeline: StrategyExecutionPipeline,
+        context_store: TaskContextStore,
+        observer_notifier: TaskObserverNotifier,
+        event_bus: EventBus,
+        lifecycle: TaskLifecycle,
+    ) -> None:
+        self.strategy = strategy
+        self.pipeline = pipeline
+        self.context_store = context_store
+        self.observer_notifier = observer_notifier
+        self.event_bus = event_bus
+        self.lifecycle = lifecycle
+
+    def start(self, task: Task) -> tuple[Task, StrategyContext]:
+        """Run strategy start callback and persist its state."""
+        context = self.pipeline.context(task)
+        start_result = self.strategy.on_start(context)
+        context = self.pipeline.process_result(start_result, context)
+        task = self.context_store.save(context)
+        return task, context
+
+    def tick(
+        self,
+        *,
+        task: Task,
+        context: StrategyContext,
+        tick: Tick,
+        control: TaskExecutionControl,
+    ) -> TaskTickStep:
+        """Run one strategy tick or return a requested terminal transition."""
+        self.event_bus.expire_pending_strategy_requests(
+            task_id=task.id,
+            timestamp=tick.timestamp,
+        )
+        if control.pause_requested:
+            return TaskTickStep(
+                task=task,
+                context=context,
+                terminal_task=self.lifecycle.pause_current(),
+            )
+        if control.stop_requested:
+            return TaskTickStep(
+                task=task,
+                context=context,
+                terminal_task=self.lifecycle.stop_current(),
+                finish_terminal=True,
+            )
+
+        tick_result = self.strategy.on_tick(tick, context)
+        context = self.pipeline.process_result(tick_result, context)
+        task = self.context_store.save(context)
+        self.observer_notifier.tick(task, tick)
+        return TaskTickStep(task=task, context=context)
+
+    def stop(
+        self,
+        *,
+        task: Task,
+        context: StrategyContext,
+        mode: TerminalMode,
+    ) -> Task:
+        """Run strategy stop callback and apply the final lifecycle transition."""
+        stop_result = self.strategy.on_stop(context)
+        context = self.pipeline.process_result(stop_result, context)
+        self.context_store.save(context)
+        if mode == "complete":
+            return self.lifecycle.complete_current()
+        return self.lifecycle.stop_current()
+
+
 class TaskRunner(ABC):
     """Base runner shared by backtest and live trading execution."""
 
@@ -244,15 +336,18 @@ class TaskRunner(ABC):
             ),
             event_bus=event_bus,
         )
+        self.driver = TaskStrategyDriver(
+            strategy=strategy,
+            pipeline=self.pipeline,
+            context_store=self.context_store,
+            observer_notifier=self.observer_notifier,
+            event_bus=event_bus,
+            lifecycle=self.lifecycle,
+        )
 
     @abstractmethod
     def run(self, control: TaskExecutionControl | None = None) -> Task:
         """Run the task until completion, stop, pause, or failure."""
-
-    def _save_context_state(self, context: StrategyContext) -> Task:
-        saved = self.context_store.save(context)
-        self.task = saved
-        return saved
 
     def _finish(self, task: Task) -> Task:
         self.event_bus.clear_pending_strategy_requests(
@@ -283,12 +378,10 @@ class BacktestRunner(TaskRunner):
             msg = "backtest runner requires BacktestTaskDefinition"
             raise TypeError(msg)
         definition = task.definition
-        context = self.pipeline.context(task)
 
         try:
-            start_result = self.strategy.on_start(context)
-            context = self.pipeline.process_result(start_result, context)
-            task = self._save_context_state(context)
+            task, context = self.driver.start(task)
+            self.task = task
             ticks = self.data_source.ticks(
                 instrument=task.instrument,
                 start_at=definition.start_at,
@@ -296,31 +389,26 @@ class BacktestRunner(TaskRunner):
             )
             for tick in ticks:
                 self._set_clock(tick.timestamp)
-                self.event_bus.expire_pending_strategy_requests(
-                    task_id=task.id,
-                    timestamp=tick.timestamp,
+                step = self.driver.tick(
+                    task=task,
+                    context=context,
+                    tick=tick,
+                    control=execution_control,
                 )
-                if execution_control.pause_requested:
-                    paused = self.lifecycle.pause_current()
-                    return paused
-                if execution_control.stop_requested:
-                    stopped = self.lifecycle.stop_current()
-                    return self._finish(stopped)
-
-                tick_result = self.strategy.on_tick(tick, context)
-                context = self.pipeline.process_result(tick_result, context)
-                task = self._save_context_state(context)
-                self.observer_notifier.tick(task, tick)
+                if step.terminal_task is not None:
+                    if step.finish_terminal:
+                        return self._finish(step.terminal_task)
+                    return step.terminal_task
+                task = step.task
+                self.task = task
+                context = step.context
 
             self._set_clock(definition.end_at)
             self.event_bus.expire_pending_strategy_requests(
                 task_id=task.id,
                 timestamp=definition.end_at,
             )
-            stop_result = self.strategy.on_stop(context)
-            context = self.pipeline.process_result(stop_result, context)
-            task = self._save_context_state(context)
-            completed = self.lifecycle.complete_current()
+            completed = self.driver.stop(task=task, context=context, mode="complete")
             return self._finish(completed)
         except Exception as exc:
             failed = self.lifecycle.fail_current(exc)
@@ -353,34 +441,27 @@ class TradingRunner(TaskRunner):
         if not isinstance(task.definition, TradingTaskDefinition):
             msg = "trading runner requires TradingTaskDefinition"
             raise TypeError(msg)
-        context = self.pipeline.context(task)
 
         try:
-            start_result = self.strategy.on_start(context)
-            context = self.pipeline.process_result(start_result, context)
-            task = self._save_context_state(context)
+            task, context = self.driver.start(task)
+            self.task = task
             ticks = self.data_source.ticks(instrument=task.instrument)
             for tick in ticks:
-                self.event_bus.expire_pending_strategy_requests(
-                    task_id=task.id,
-                    timestamp=tick.timestamp,
+                step = self.driver.tick(
+                    task=task,
+                    context=context,
+                    tick=tick,
+                    control=execution_control,
                 )
-                if execution_control.pause_requested:
-                    paused = self.lifecycle.pause_current()
-                    return paused
-                if execution_control.stop_requested:
-                    stopped = self.lifecycle.stop_current()
-                    return self._finish(stopped)
+                if step.terminal_task is not None:
+                    if step.finish_terminal:
+                        return self._finish(step.terminal_task)
+                    return step.terminal_task
+                task = step.task
+                self.task = task
+                context = step.context
 
-                tick_result = self.strategy.on_tick(tick, context)
-                context = self.pipeline.process_result(tick_result, context)
-                task = self._save_context_state(context)
-                self.observer_notifier.tick(task, tick)
-
-            stop_result = self.strategy.on_stop(context)
-            context = self.pipeline.process_result(stop_result, context)
-            task = self._save_context_state(context)
-            stopped = self.lifecycle.stop_current()
+            stopped = self.driver.stop(task=task, context=context, mode="stop")
             return self._finish(stopped)
         except Exception as exc:
             failed = self.lifecycle.fail_current(exc)

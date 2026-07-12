@@ -8,8 +8,9 @@ from uuid import UUID
 from pydantic import AwareDatetime
 
 from core.models.identifiers import new_uuid
-from core.results.ledger import MoneyAccumulator, TradeState
 from core.results.models import ProfitMetric
+from core.results.money_aggregation import MoneyAccumulator
+from core.results.trade_state import TradeState
 from core.sources.models import Tick
 from core.tasks.execution import ExecutableTask
 

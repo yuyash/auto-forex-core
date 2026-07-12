@@ -2,10 +2,8 @@
 
 from core.events.bus import (
     EventBus,
-    EventHandler,
     EventHandlerError,
     EventPublication,
-    EventSubscription,
 )
 from core.events.errors import (
     ErrorCategory,
@@ -15,6 +13,7 @@ from core.events.errors import (
 )
 from core.events.event import Event
 from core.events.handlers import RecordingEventHandler
+from core.events.routing import EventHandler, EventSubscription
 from core.events.types import (
     EventMessageKey,
     EventSeverity,

@@ -2,31 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from threading import RLock
-from typing import TYPE_CHECKING, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, TypeVar, overload
 from uuid import UUID
 
-from core.events.aggregation import StrategyEventAggregator
 from core.events.event import Event
-from core.events.pending_strategy import StrategyRequestTimeout
+from core.events.history import EventHistoryRecorder
+from core.events.routing import (
+    EventHandler,
+    EventPredicate,
+    EventPredicateFactory,
+    EventSubscription,
+    EventSubscriptionRegistry,
+)
+from core.events.strategy_correlation import StrategyEventCorrelation
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
 
 if TYPE_CHECKING:
     from core.strategies.execution import StrategyEventRequest
 
-type EventPredicate = Callable[[Event], bool]
 EventT = TypeVar("EventT", bound=Event)
-
-
-class EventHandler(Protocol):
-    """Handler boundary for in-process event processing."""
-
-    def handle(self, event: Event) -> None:
-        """Process one event."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,18 +48,6 @@ class EventHandlerError(RuntimeError):
         super().__init__(f"event handler {handler_type} failed for {event.type.value}: {cause}")
 
 
-@dataclass(frozen=True, slots=True)
-class EventSubscription:
-    """One event-bus subscription."""
-
-    handler: EventHandler
-    predicate: EventPredicate
-
-    def matches(self, event: Event) -> bool:
-        """Return whether this subscription should handle the event."""
-        return self.predicate(event)
-
-
 class EventBus:
     """Synchronous in-process event bus with filtering and handler results."""
 
@@ -72,25 +58,18 @@ class EventBus:
         record_history: bool = False,
         strategy_request_timeout: timedelta | None = None,
     ) -> None:
-        self._subscriptions = [
-            EventSubscription(handler=handler, predicate=lambda _event: True)
-            for handler in handlers
-        ]
-        self._record_history = record_history
-        self._strategy_event_aggregator = StrategyEventAggregator(
-            request_timeout=strategy_request_timeout
-        )
-        self._history: list[Event] = []
-        self._lock = RLock()
+        self._subscriptions = EventSubscriptionRegistry(handlers)
+        self._history = EventHistoryRecorder(enabled=record_history)
+        self._strategy_events = StrategyEventCorrelation(request_timeout=strategy_request_timeout)
 
     @property
     def strategy_request_timeout(self) -> timedelta | None:
         """Return how long a strategy request may remain without a broker response."""
-        return self._strategy_event_aggregator.request_timeout
+        return self._strategy_events.request_timeout
 
     @strategy_request_timeout.setter
     def strategy_request_timeout(self, timeout: timedelta | None) -> None:
-        self._strategy_event_aggregator.request_timeout = StrategyRequestTimeout.validate(timeout)
+        self._strategy_events.request_timeout = timeout
 
     def subscribe(
         self,
@@ -101,24 +80,16 @@ class EventBus:
         event_class: type[Event] | None = None,
     ) -> EventSubscription:
         """Register an event handler."""
-        subscription = EventSubscription(
-            handler=handler,
-            predicate=self._predicate(
-                predicate=predicate,
-                event_type=event_type,
-                event_class=event_class,
-            ),
+        return self._subscriptions.subscribe(
+            handler,
+            predicate=predicate,
+            event_type=event_type,
+            event_class=event_class,
         )
-        with self._lock:
-            self._subscriptions.append(subscription)
-        return subscription
 
     def unsubscribe(self, subscription: EventSubscription) -> None:
         """Remove an event handler subscription."""
-        with self._lock:
-            self._subscriptions = [
-                candidate for candidate in self._subscriptions if candidate is not subscription
-            ]
+        self._subscriptions.unsubscribe(subscription)
 
     def publish(self, event: Event) -> EventPublication:
         """Publish one event to all handlers."""
@@ -139,12 +110,8 @@ class EventBus:
 
     def _publish_one(self, event: Event) -> EventPublication:
         """Publish a concrete event without deriving aggregate events."""
-        with self._lock:
-            if self._record_history:
-                self._history.append(event)
-            subscriptions = tuple(
-                subscription for subscription in self._subscriptions if subscription.matches(event)
-            )
+        self._history.record(event)
+        subscriptions = self._subscriptions.matching(event)
 
         delivered_count = 0
         for subscription in subscriptions:
@@ -152,9 +119,7 @@ class EventBus:
                 subscription.handler.handle(event)
             except Exception as exc:
                 failure_event = self._handler_failure_event(event, subscription.handler, exc)
-                with self._lock:
-                    if self._record_history:
-                        self._history.append(failure_event)
+                self._history.record(failure_event)
                 raise EventHandlerError(
                     event=event,
                     handler=subscription.handler,
@@ -169,7 +134,7 @@ class EventBus:
         )
 
     def _events_to_publish(self, event: Event) -> tuple[Event, ...]:
-        return self._strategy_event_aggregator.events_for(event)
+        return self._strategy_events.events_for(event)
 
     def publish_many(self, events: Iterable[Event]) -> None:
         """Publish events in order."""
@@ -179,12 +144,12 @@ class EventBus:
     @property
     def pending_strategy_requests(self) -> Sequence[StrategyEventRequest]:
         """Return strategy requests waiting for an execution response."""
-        return self._strategy_event_aggregator.pending_requests
+        return self._strategy_events.pending_requests
 
     @property
     def pending_strategy_request_count(self) -> int:
         """Return the number of strategy requests waiting for execution responses."""
-        return self._strategy_event_aggregator.pending_request_count
+        return self._strategy_events.pending_request_count
 
     def expire_pending_strategy_requests(
         self,
@@ -194,7 +159,7 @@ class EventBus:
         timeout: timedelta | None = None,
     ) -> tuple[Event, ...]:
         """Fail pending strategy requests older than the configured timeout."""
-        events = self._strategy_event_aggregator.expire_pending(
+        events = self._strategy_events.expire_pending(
             timestamp=timestamp,
             task_id=task_id,
             timeout=timeout,
@@ -210,7 +175,7 @@ class EventBus:
         timestamp: datetime | None = None,
     ) -> tuple[Event, ...]:
         """Clear pending strategy requests, publishing diagnostics for each request."""
-        events = self._strategy_event_aggregator.clear_pending(
+        events = self._strategy_events.clear_pending(
             task_id=task_id,
             reason=reason,
             timestamp=timestamp,
@@ -221,8 +186,7 @@ class EventBus:
     @property
     def history(self) -> Sequence[Event]:
         """Return events published by this bus when history recording is enabled."""
-        with self._lock:
-            return tuple(self._history)
+        return self._history.snapshot()
 
     @overload
     def select(
@@ -250,29 +214,12 @@ class EventBus:
         event_class: type[Event] | None = None,
     ) -> tuple[Event, ...]:
         """Return historical events matching the given filters."""
-        match = self._predicate(
+        match = EventPredicateFactory.create(
             predicate=predicate,
             event_type=event_type,
             event_class=event_class,
         )
-        with self._lock:
-            return tuple(event for event in self._history if match(event))
-
-    def _predicate(
-        self,
-        *,
-        predicate: EventPredicate | None = None,
-        event_type: EventType | None = None,
-        event_class: type[Event] | None = None,
-    ) -> EventPredicate:
-        def matches(event: Event) -> bool:
-            if event_class is not None and not isinstance(event, event_class):
-                return False
-            if event_type is not None and event.type != event_type:
-                return False
-            return predicate(event) if predicate is not None else True
-
-        return matches
+        return self._history.select(match)
 
     @staticmethod
     def _handler_failure_event(

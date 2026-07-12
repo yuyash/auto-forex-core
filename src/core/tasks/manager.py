@@ -5,40 +5,34 @@ from __future__ import annotations
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from types import TracebackType
 from typing import Self
 from uuid import UUID
 
 from core.clock import Clock
 from core.events.bus import EventBus, EventHandler
-from core.events.event import Event
-from core.events.types import EventSource, EventType
-from core.models.metadata import Metadata
 from core.ports.brokers import Broker
 from core.sources.base import DataSource
 from core.strategies.base import Strategy
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
 from core.tasks.launching import TaskLauncher, TaskRunnerFactory
+from core.tasks.management import (
+    TaskControlService,
+    TaskEventPublisher,
+    TaskLaunchService,
+    TaskProgressService,
+)
 from core.tasks.monitors import StrategyRequestTimeoutMonitor
 from core.tasks.observers import TaskObserver
 from core.tasks.profiling import TaskProfile, TaskProfilingConfig
 from core.tasks.progress import TaskProgress, TaskProgressReporter
 from core.tasks.registry import InMemoryTaskRegistry, TaskRegistry
 from core.tasks.runtime import RunnerType, TaskRuntimeRegistry
-from core.tasks.state import TaskAction, TaskStatus
-from core.tasks.waiting import BacktestProgressCalculator, TaskWaiter
+from core.tasks.waiting import TaskWaiter
 
 type Task = ExecutableTask
-
-
-class TaskAlreadyRunningError(RuntimeError):
-    """Raised when a task already has an active runner."""
-
-
-class StrategyAlreadyRunningError(RuntimeError):
-    """Raised when one strategy instance is assigned to multiple active tasks."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +124,21 @@ class TaskManager:
             runner_factory=self.runner_factory,
             default_profiling=self.profiling,
         )
+        self.events = TaskEventPublisher(self.event_bus)
+        self.launch_service = TaskLaunchService(
+            registry=self.registry,
+            runtimes=self.runtimes,
+            launcher=self.launcher,
+        )
+        self.control = TaskControlService(
+            registry=self.registry,
+            runtimes=self.runtimes,
+            events=self.events,
+        )
+        self.progress_service = TaskProgressService(
+            registry=self.registry,
+            runtimes=self.runtimes,
+        )
         self.waiter = TaskWaiter(registry=self.registry, progress_snapshot=self.progress)
         interval = StrategyRequestTimeoutMonitor.interval_for(
             configured=strategy_request_timeout_check_interval,
@@ -215,25 +224,11 @@ class TaskManager:
 
     def pause(self, task_id: UUID) -> Task:
         """Request a graceful task pause."""
-        runtime = self.runtimes.get(task_id)
-        runtime.control.request_pause()
-        task = self.registry.get(task_id)
-        if task.can(TaskAction.PAUSE):
-            paused = self.registry.save(task.pause(clock=runtime.clock))
-            self._publish_task_event(EventType.TASK_PAUSED, paused, clock=runtime.clock)
-            return paused
-        return task
+        return self.control.pause(task_id)
 
     def stop(self, task_id: UUID) -> Task:
         """Request a graceful task stop."""
-        runtime = self.runtimes.get(task_id)
-        runtime.control.request_stop()
-        task = self.registry.get(task_id)
-        if task.can(TaskAction.STOP):
-            stopped = self.registry.save(task.stop(clock=runtime.clock))
-            self._publish_task_event(EventType.TASK_STOPPED, stopped, clock=runtime.clock)
-            return stopped
-        return task
+        return self.control.stop(task_id)
 
     def restart(self, task_id: UUID, *, timeout: float | None = None) -> Task:
         """Restart a task using the same runtime dependencies."""
@@ -275,22 +270,7 @@ class TaskManager:
 
     def progress(self, task_id: UUID) -> TaskProgress:
         """Return a point-in-time progress snapshot for the task run."""
-        runtime = self.runtimes.get(task_id)
-        task = self.registry.get(task_id)
-        current_at = runtime.clock.now()
-        if isinstance(task.definition, BacktestTaskDefinition):
-            return self._backtest_progress(task, current_at=current_at)
-        return TaskProgress(
-            task_id=task.id,
-            task_name=task.name,
-            status=task.status,
-            current_at=current_at,
-            start_at=task.started_at,
-            end_at=None,
-            completed_units=None,
-            total_units=None,
-            unit="tick",
-        )
+        return self.progress_service.progress(task_id)
 
     def profile(self, task_id: UUID) -> TaskProfile:
         """Return a point-in-time profiling snapshot for the task run."""
@@ -315,26 +295,7 @@ class TaskManager:
         clock: Clock,
         profiling: TaskProfilingConfig | None = None,
     ) -> None:
-        current = self.runtimes.current(task.id)
-        if current is not None and not current.future.done():
-            current_task = self.registry.get(task.id)
-            if self.runtimes.is_active_task(current_task):
-                msg = f"task already has an active runner: {task.id}"
-                raise TaskAlreadyRunningError(msg)
-
-        active_strategy_task_id = self.runtimes.active_strategy_task_id(
-            strategy,
-            exclude_task_id=task.id,
-            active_tasks=self._active_task_snapshots(),
-        )
-        if active_strategy_task_id is not None:
-            msg = (
-                "strategy instance already has an active runner: "
-                f"{strategy.name} for task {active_strategy_task_id}"
-            )
-            raise StrategyAlreadyRunningError(msg)
-
-        runtime = self.launcher.launch(
+        self.launch_service.launch(
             task,
             type=type,
             data_source=data_source,
@@ -342,61 +303,4 @@ class TaskManager:
             broker=broker,
             clock=clock,
             profiling=profiling,
-        )
-        self.runtimes.save(task.id, runtime)
-
-    def _active_task_snapshots(self) -> tuple[Task, ...]:
-        snapshots: list[Task] = []
-        for task_id, runtime in self.runtimes.items():
-            if runtime.future.done():
-                continue
-            try:
-                snapshots.append(self.registry.get(task_id))
-            except Exception:
-                continue
-        return tuple(snapshots)
-
-    def _backtest_progress(self, task: Task, *, current_at: datetime) -> TaskProgress:
-        if not isinstance(task.definition, BacktestTaskDefinition):
-            msg = "backtest progress requires BacktestTaskDefinition"
-            raise TypeError(msg)
-        definition = task.definition
-        if task.status == TaskStatus.COMPLETED:
-            current_at = definition.end_at
-        total_seconds = (definition.end_at - definition.start_at).total_seconds()
-        completed_seconds = BacktestProgressCalculator.completed_seconds(
-            start_at=definition.start_at,
-            end_at=definition.end_at,
-            current_at=current_at,
-        )
-        return TaskProgress(
-            task_id=task.id,
-            task_name=task.name,
-            status=task.status,
-            current_at=current_at,
-            start_at=definition.start_at,
-            end_at=definition.end_at,
-            completed_units=completed_seconds,
-            total_units=total_seconds,
-            unit="s",
-        )
-
-    def _publish_task_event(
-        self,
-        event_type: EventType,
-        task: Task,
-        *,
-        clock: Clock,
-    ) -> None:
-        self.event_bus.publish(
-            Event(
-                type=event_type,
-                timestamp=clock.now(),
-                task_id=task.id,
-                source=EventSource.CORE,
-                metadata=Metadata.of(
-                    task_status=task.status.value,
-                    task_type=task.task_type.value,
-                ),
-            )
         )
