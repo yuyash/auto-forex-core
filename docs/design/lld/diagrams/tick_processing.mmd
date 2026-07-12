@@ -4,90 +4,92 @@ sequenceDiagram
 
     participant Runner as TaskRunner
     participant Clock as ManualClock
-    participant Control as TaskExecutionControl
     participant Strategy as Strategy
     participant Pipeline as StrategyExecutionPipeline
     participant Bus as EventBus
     participant Executor as StrategyEventExecutor
     participant Broker as Broker
+    participant Registry as TaskRegistry
     participant Observer as TaskObserver
 
     loop each Tick from DataSource
         alt backtest runner
             Runner->>Clock: set(tick.timestamp)
         end
+        Runner->>Bus: expire_pending_strategy_requests(task_id, tick.timestamp)
 
-        Runner->>Control: pause_requested / stop_requested
-        alt pause or stop requested
-            Note over Runner: lifecycle transition is handled by task_execution.mmd
-        else continue processing
-            Runner->>Strategy: on_tick(tick, context)
-            Strategy-->>Runner: StrategyResult(events, state?)
+        Runner->>Strategy: on_tick(tick, context)
+        Strategy-->>Runner: StrategyResult(events, state?)
 
-            Runner->>Pipeline: process_result(result, context)
-            alt result.state is present
-                Pipeline->>Pipeline: context.with_state(result.state)
-            end
-
-            alt no strategy events
-                Pipeline-->>Runner: updated context
-            else strategy events emitted
-                Pipeline->>Bus: publish_many(StrategyEventRequest...)
-                loop each StrategyEventRequest
-                    alt request.requires_broker
-                        Bus->>Bus: store pending request by event.id
-                        Bus->>Bus: publish request to handlers
-                    else no broker required
-                        Bus->>Bus: publish request to handlers
-                        Bus->>Bus: publish StrategyEvent(request only)
-                    end
-                end
-
-                Pipeline->>Executor: execute_many(requests)
-                loop each request
-                    alt HOLD
-                        Executor-->>Pipeline: no response
-                    else OPEN_TRADE
-                        Executor->>Executor: build open-trade Order
-                        alt dry_run
-                            Executor->>Executor: mark Order as FILLED
-                        else broker execution
-                            Executor->>Broker: place_order(order)
-                            Broker-->>Executor: Order
-                        end
-                        Executor-->>Pipeline: StrategyExecutionResponse
-                    else CLOSE_TRADE
-                        alt dry_run
-                            Executor->>Executor: build filled close Order
-                        else broker execution
-                            Executor->>Broker: positions(instrument)
-                            Broker-->>Executor: Position...
-                            loop matching open sides
-                                Executor->>Broker: close_position(position, side, units?)
-                                Broker-->>Executor: Order
-                            end
-                        end
-                        Executor-->>Pipeline: StrategyExecutionResponse...
-                    else execution exception
-                        Executor-->>Pipeline: StrategyExecutionResponse(execution_error)
-                    end
-                end
-
-                Pipeline->>Bus: publish_many(StrategyExecutionResponse...)
-                loop each StrategyExecutionResponse
-                    Bus->>Bus: pop matching pending request
-                    Bus->>Bus: publish response to handlers
-                    Bus->>Bus: publish StrategyEvent(request, response)
-                end
-
-                Pipeline->>Strategy: on_execution_reports(reports, context)
-                Strategy-->>Pipeline: StrategyState
-                alt state changed
-                    Pipeline->>Pipeline: context.with_state(state)
-                end
-                Pipeline-->>Runner: updated context
-            end
-
-            Runner->>Observer: on_tick(task, tick)
+        Runner->>Pipeline: process_result(result, context)
+        alt result.state is present
+            Pipeline->>Pipeline: context.with_state(result.state)
         end
+
+        alt no strategy events
+            Pipeline-->>Runner: updated context
+        else strategy events emitted
+            Pipeline->>Bus: publish_many(StrategyEventRequest...)
+            loop each StrategyEventRequest
+                alt request.requires_broker
+                    Bus->>Bus: store pending request by event.id
+                    Bus->>Bus: publish request to handlers
+                else no broker required
+                    Bus->>Bus: publish request to handlers
+                    Bus->>Bus: publish StrategyEvent(request only)
+                end
+            end
+
+            Pipeline->>Executor: execute_many(requests)
+            loop each request
+                alt HOLD
+                    Executor-->>Pipeline: no response
+                else OPEN_TRADE
+                    Executor->>Executor: build open-trade Order with logical_trade_id
+                    alt dry_run
+                        Executor->>Executor: mark Order as FILLED
+                    else broker execution
+                        Executor->>Broker: place_order(order)
+                        Broker-->>Executor: Order(metadata includes broker trade ids)
+                    end
+                    Executor-->>Pipeline: StrategyExecutionResponse
+                else CLOSE_TRADE with display_id or logical_trade_id
+                    Executor->>Broker: open_trades(instrument)
+                    Broker-->>Executor: Trade...
+                    Executor->>Executor: match Trade by id, logical_trade_id, client_trade_id, or clientExtensions.id
+                    loop matching trades
+                        Executor->>Broker: close_trade(trade, units?)
+                        Broker-->>Executor: Order
+                    end
+                    Executor-->>Pipeline: StrategyExecutionResponse...
+                else CLOSE_TRADE without logical trade id
+                    Executor->>Broker: positions(instrument)
+                    Broker-->>Executor: Position...
+                    loop matching open sides
+                        Executor->>Broker: close_position(position, side, units?)
+                        Broker-->>Executor: Order
+                    end
+                    Executor-->>Pipeline: StrategyExecutionResponse...
+                else execution exception
+                    Executor-->>Pipeline: StrategyExecutionResponse(execution_error)
+                end
+            end
+
+            Pipeline->>Bus: publish_many(StrategyExecutionResponse...)
+            loop each StrategyExecutionResponse
+                Bus->>Bus: pop matching pending request
+                Bus->>Bus: publish response to handlers
+                Bus->>Bus: publish StrategyEvent(request, response)
+            end
+
+            Pipeline->>Strategy: on_execution_reports(reports, context)
+            Strategy-->>Pipeline: StrategyState
+            alt state changed
+                Pipeline->>Pipeline: context.with_state(state)
+            end
+            Pipeline-->>Runner: updated context
+        end
+
+        Runner->>Registry: save(task.with_strategy_state(context.state))
+        Runner->>Observer: on_tick(task, tick)
     end

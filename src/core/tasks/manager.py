@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import RLock
 from time import perf_counter
 from types import TracebackType
@@ -121,9 +121,12 @@ class TaskManager:
         profiling: TaskProfilingConfig | None = None,
         observers: Iterable[TaskObserver] = (),
         max_workers: int = 4,
+        strategy_request_timeout: timedelta | None = None,
     ) -> None:
         self.registry = registry or InMemoryTaskRegistry()
-        self.event_bus = event_bus or EventBus()
+        self.event_bus = event_bus or EventBus(strategy_request_timeout=strategy_request_timeout)
+        if event_bus is not None and strategy_request_timeout is not None:
+            self.event_bus.strategy_request_timeout = strategy_request_timeout
         self.profiling = profiling or TaskProfilingConfig()
         self.observers = tuple(observers)
         for observer in self.observers:

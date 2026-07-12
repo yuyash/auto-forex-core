@@ -17,7 +17,7 @@ from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
 from core.models.money import CurrencyPair
-from core.strategies.models import StrategyParameters
+from core.strategies.models import StrategyParameters, StrategyState
 from core.tasks.definitions import TaskDefinition, TaskType
 from core.tasks.failure import TaskFailure
 from core.tasks.state import (
@@ -77,6 +77,7 @@ class ExecutableTask(DomainModel):
     completed_at: AwareDatetime | None = None
     failure: TaskFailure | None = None
     run_count: int = Field(default=0, ge=0)
+    strategy_state: StrategyState = Field(default_factory=StrategyState)
 
     @classmethod
     def from_definition(
@@ -227,9 +228,16 @@ class ExecutableTask(DomainModel):
             completed_at=None,
             failure=None,
             run_count=self.run_count + 1,
+            strategy_state=StrategyState(),
         )
         self._log_transition(TaskAction.RESTART, task)
         return task
+
+    def with_strategy_state(self, state: StrategyState) -> Self:
+        """Return a task snapshot carrying the latest strategy state."""
+        if state == self.strategy_state:
+            return self
+        return self.evolve(strategy_state=state)
 
     def complete(self, *, at: datetime | None = None, clock: Clock | None = None) -> Self:
         """Mark a running task as completed."""

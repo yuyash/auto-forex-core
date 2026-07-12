@@ -188,7 +188,13 @@ class StrategyExecutionResponse(Event):
 
     def _execution_metadata(self) -> Metadata:
         metadata = self.metadata
-        if self.order is None or not self.filled:
+        if self.order is None:
+            return metadata
+        metadata = metadata.merge(self.order.metadata)
+        if self.order.broker_order_id is not None:
+            metadata = metadata.with_value("broker_order_id", str(self.order.broker_order_id))
+        metadata = metadata.with_value("order_status", self.order.status.value)
+        if not self.filled:
             return metadata
 
         fill_price = self.order.average_fill_price or self.order.price

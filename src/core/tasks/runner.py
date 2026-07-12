@@ -167,6 +167,7 @@ class StrategyExecutionPipeline:
             task_id=task.id,
             task_type=task.task_type,
             instrument=task.instrument,
+            state=task.strategy_state,
             metadata=Metadata.of(strategy_name=self.strategy.name),
         )
 
@@ -288,6 +289,20 @@ class TaskRunner(ABC):
             )
         )
 
+    def _save_context_state(self, context: StrategyContext) -> Task:
+        task = self.registry.get(context.task_id)
+        saved = self.registry.save(task.with_strategy_state(context.state))
+        self.task = saved
+        return saved
+
+    def _finish(self, task: Task) -> Task:
+        self.event_bus.clear_pending_strategy_requests(
+            task_id=task.id,
+            reason=f"task {task.status.value}",
+            timestamp=self.clock.now(),
+        )
+        return self._notify_finished(task)
+
 
 class BacktestRunner(TaskRunner):
     """Run a finite backtest over historical ticks."""
@@ -313,6 +328,7 @@ class BacktestRunner(TaskRunner):
         try:
             start_result = self.strategy.on_start(context)
             context = self.pipeline.process_result(start_result, context)
+            task = self._save_context_state(context)
             ticks = self.data_source.ticks(
                 instrument=task.instrument,
                 start_at=definition.start_at,
@@ -320,26 +336,36 @@ class BacktestRunner(TaskRunner):
             )
             for tick in ticks:
                 self._set_clock(tick.timestamp)
+                self.event_bus.expire_pending_strategy_requests(
+                    task_id=task.id,
+                    timestamp=tick.timestamp,
+                )
                 if execution_control.pause_requested:
                     paused = self.lifecycle.pause_current()
                     return paused
                 if execution_control.stop_requested:
                     stopped = self.lifecycle.stop_current()
-                    return self._notify_finished(stopped)
+                    return self._finish(stopped)
 
                 tick_result = self.strategy.on_tick(tick, context)
                 context = self.pipeline.process_result(tick_result, context)
+                task = self._save_context_state(context)
                 self._notify_tick(task, tick)
 
             self._set_clock(definition.end_at)
+            self.event_bus.expire_pending_strategy_requests(
+                task_id=task.id,
+                timestamp=definition.end_at,
+            )
             stop_result = self.strategy.on_stop(context)
             context = self.pipeline.process_result(stop_result, context)
+            task = self._save_context_state(context)
             completed = self.lifecycle.complete_current()
-            return self._notify_finished(completed)
+            return self._finish(completed)
         except Exception as exc:
             failed = self.lifecycle.fail_current(exc)
             try:
-                return self._notify_finished(failed)
+                return self._finish(failed)
             except Exception:
                 return failed
 
@@ -370,26 +396,33 @@ class TradingRunner(TaskRunner):
         try:
             start_result = self.strategy.on_start(context)
             context = self.pipeline.process_result(start_result, context)
+            task = self._save_context_state(context)
             ticks = self.data_source.ticks(instrument=task.instrument)
             for tick in ticks:
+                self.event_bus.expire_pending_strategy_requests(
+                    task_id=task.id,
+                    timestamp=tick.timestamp,
+                )
                 if execution_control.pause_requested:
                     paused = self.lifecycle.pause_current()
                     return paused
                 if execution_control.stop_requested:
                     stopped = self.lifecycle.stop_current()
-                    return self._notify_finished(stopped)
+                    return self._finish(stopped)
 
                 tick_result = self.strategy.on_tick(tick, context)
                 context = self.pipeline.process_result(tick_result, context)
+                task = self._save_context_state(context)
                 self._notify_tick(task, tick)
 
             stop_result = self.strategy.on_stop(context)
             context = self.pipeline.process_result(stop_result, context)
+            task = self._save_context_state(context)
             stopped = self.lifecycle.stop_current()
-            return self._notify_finished(stopped)
+            return self._finish(stopped)
         except Exception as exc:
             failed = self.lifecycle.fail_current(exc)
             try:
-                return self._notify_finished(failed)
+                return self._finish(failed)
             except Exception:
                 return failed

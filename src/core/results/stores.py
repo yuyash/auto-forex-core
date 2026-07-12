@@ -42,6 +42,22 @@ from core.results.models import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ResultBatch:
+    """Batch of result records flushed to an external result store."""
+
+    events: tuple[StrategyEventRecord, ...] = ()
+    trades: tuple[TradeSummary, ...] = ()
+    cycles: tuple[CycleSummary, ...] = ()
+    tasks: tuple[TaskSummary, ...] = ()
+    metrics: tuple[ProfitMetric, ...] = ()
+
+    @property
+    def is_empty(self) -> bool:
+        """Return whether the batch contains no records."""
+        return not (self.events or self.trades or self.cycles or self.tasks or self.metrics)
+
+
 class ProfitMetricStore(Protocol):
     """Persistence boundary for point-in-time P/L metrics."""
 
@@ -63,6 +79,9 @@ class ResultStore(ProfitMetricStore, Protocol):
 
     def save_task(self, summary: TaskSummary) -> None:
         """Persist one task summary."""
+
+    def save_batch(self, batch: ResultBatch) -> None:
+        """Persist a batch of result records."""
 
 
 class InMemoryResultStore:
@@ -100,6 +119,18 @@ class InMemoryResultStore:
         """Persist one profit metric."""
         with self._lock:
             self._metrics.append(metric)
+
+    def save_batch(self, batch: ResultBatch) -> None:
+        """Persist a batch of result records."""
+        with self._lock:
+            self._events.extend(batch.events)
+            for summary in batch.trades:
+                self._trades[(summary.task_id, summary.trade_id)] = summary
+            for summary in batch.cycles:
+                self._cycles[(summary.task_id, summary.cycle_id)] = summary
+            for summary in batch.tasks:
+                self._tasks[summary.task_id] = summary
+            self._metrics.extend(batch.metrics)
 
     @property
     def events(self) -> tuple[StrategyEventRecord, ...]:
@@ -172,16 +203,54 @@ class CsvResultStore:
         """Persist one profit metric."""
         self._append("profit_metrics.csv", _ResultRowMapper.metric(metric))
 
+    def save_batch(self, batch: ResultBatch) -> None:
+        """Persist a batch of result records."""
+        if batch.events:
+            self._append_many(
+                "strategy_events.csv",
+                tuple(_ResultRowMapper.event(record) for record in batch.events),
+            )
+        if batch.trades:
+            self._upsert_many(
+                "trade_summaries.csv",
+                tuple(_ResultRowMapper.trade(summary) for summary in batch.trades),
+                key_fields=("task_id", "trade_id"),
+            )
+        if batch.cycles:
+            self._upsert_many(
+                "cycle_summaries.csv",
+                tuple(_ResultRowMapper.cycle(summary) for summary in batch.cycles),
+                key_fields=("task_id", "cycle_id"),
+            )
+        if batch.tasks:
+            self._upsert_many(
+                "task_summaries.csv",
+                tuple(_ResultRowMapper.task(summary) for summary in batch.tasks),
+                key_fields=("task_id",),
+            )
+        if batch.metrics:
+            self._append_many(
+                "profit_metrics.csv",
+                tuple(_ResultRowMapper.metric(metric) for metric in batch.metrics),
+            )
+
     def _append(self, filename: str, row: Mapping[str, Any]) -> None:
+        self._append_many(filename, (row,))
+
+    def _append_many(self, filename: str, rows: tuple[Mapping[str, Any], ...]) -> None:
+        if not rows:
+            return
         path = self.directory / filename
+        fieldnames = tuple(rows[0].keys())
         with self._lock:
             write_header = not path.exists()
             with path.open("a", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(handle, fieldnames=tuple(row.keys()))
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
                 if write_header:
                     writer.writeheader()
-                writer.writerow(
+                writer.writerows(
                     {key: _ResultRowMapper.csv_value(value) for key, value in row.items()}
+                    for row in rows
                 )
 
     def _upsert(
@@ -191,23 +260,37 @@ class CsvResultStore:
         *,
         key_fields: tuple[str, ...],
     ) -> None:
+        self._upsert_many(filename, (row,), key_fields=key_fields)
+
+    def _upsert_many(
+        self,
+        filename: str,
+        rows: tuple[Mapping[str, Any], ...],
+        *,
+        key_fields: tuple[str, ...],
+    ) -> None:
+        if not rows:
+            return
         path = self.directory / filename
-        new_row = {key: _ResultRowMapper.csv_value(value) for key, value in row.items()}
-        key = {field: new_row[field] for field in key_fields}
+        new_rows = tuple(
+            {key: _ResultRowMapper.csv_value(value) for key, value in row.items()} for row in rows
+        )
+        replacement_keys = {tuple(new_row[field] for field in key_fields) for new_row in new_rows}
         with self._lock:
-            rows: list[dict[str, str]] = []
+            existing_rows: list[dict[str, str]] = []
             if path.exists():
                 with path.open(newline="", encoding="utf-8") as handle:
-                    rows = [
+                    existing_rows = [
                         existing
                         for existing in csv.DictReader(handle)
-                        if any(existing.get(field) != value for field, value in key.items())
+                        if tuple(existing.get(field, "") for field in key_fields)
+                        not in replacement_keys
                     ]
-            rows.append(new_row)
+            existing_rows.extend(new_rows)
             with path.open("w", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(handle, fieldnames=tuple(new_row.keys()))
+                writer = csv.DictWriter(handle, fieldnames=tuple(new_rows[0].keys()))
                 writer.writeheader()
-                writer.writerows(rows)
+                writer.writerows(existing_rows)
 
 
 class SqlResultStore:
@@ -260,15 +343,66 @@ class SqlResultStore:
             key={"metric_id": str(metric.metric_id)},
         )
 
+    def save_batch(self, batch: ResultBatch) -> None:
+        """Persist a batch of result records."""
+        if batch.is_empty:
+            return
+        with self._lock, self.engine.begin() as connection:
+            for record in batch.events:
+                self._insert_with_connection(
+                    connection,
+                    self.tables.strategy_events,
+                    _ResultRowMapper.event(record),
+                    key={"event_id": str(record.event_id)},
+                )
+            for summary in batch.trades:
+                self._insert_with_connection(
+                    connection,
+                    self.tables.trade_summaries,
+                    _ResultRowMapper.trade(summary),
+                    key={"task_id": str(summary.task_id), "trade_id": summary.trade_id},
+                )
+            for summary in batch.cycles:
+                self._insert_with_connection(
+                    connection,
+                    self.tables.cycle_summaries,
+                    _ResultRowMapper.cycle(summary),
+                    key={"task_id": str(summary.task_id), "cycle_id": summary.cycle_id},
+                )
+            for summary in batch.tasks:
+                self._insert_with_connection(
+                    connection,
+                    self.tables.task_summaries,
+                    _ResultRowMapper.task(summary),
+                    key={"task_id": str(summary.task_id)},
+                )
+            for metric in batch.metrics:
+                self._insert_with_connection(
+                    connection,
+                    self.tables.profit_metrics,
+                    _ResultRowMapper.metric(metric),
+                    key={"metric_id": str(metric.metric_id)},
+                )
+
     def _insert(self, table: Table, row: Mapping[str, Any], *, key: Mapping[str, Any]) -> None:
         with self._lock, self.engine.begin() as connection:
-            clause = None
-            for column_name, value in key.items():
-                condition = table.c[column_name] == value
-                clause = condition if clause is None else clause & condition
-            if clause is not None:
-                connection.execute(delete(table).where(clause))
-            connection.execute(table.insert().values(**_ResultRowMapper.sql_row(row)))
+            self._insert_with_connection(connection, table, row, key=key)
+
+    @staticmethod
+    def _insert_with_connection(
+        connection: Any,
+        table: Table,
+        row: Mapping[str, Any],
+        *,
+        key: Mapping[str, Any],
+    ) -> None:
+        clause = None
+        for column_name, value in key.items():
+            condition = table.c[column_name] == value
+            clause = condition if clause is None else clause & condition
+        if clause is not None:
+            connection.execute(delete(table).where(clause))
+        connection.execute(table.insert().values(**_ResultRowMapper.sql_row(row)))
 
     @staticmethod
     def _create_engine(url: str) -> Engine:

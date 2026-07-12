@@ -4,77 +4,75 @@ sequenceDiagram
 
     participant Bus as EventBus
     participant Recorder as TaskResultRecorder
-    participant TradeState as TradeState
-    participant Store as ResultStore
     participant Memory as InMemoryResultStore
+    participant State as TradeState
+    participant Batch as ResultBatch
+    participant Store as External ResultStore
     participant Csv as CsvResultStore
     participant Sql as SqlResultStore
     participant Runner as TaskRunner
 
-    Bus->>Recorder: handle(event)
-    alt event is not StrategyEvent
-        Recorder-->>Bus: ignore
-    else event is StrategyEvent
-        Recorder->>Recorder: _record_from_event(event)
-        Recorder-->>Recorder: StrategyEventRecord
+    Bus->>Recorder: handle(StrategyEvent)
+    Recorder->>Recorder: StrategyEventRecord.from event metadata
+    Recorder->>Memory: save_event(record)
+    Recorder->>Recorder: queue event for external stores
 
-        Recorder->>Recorder: _save_event(record)
-        loop configured result stores
-            Recorder->>Store: save_event(record)
+    alt OPEN_TRADE with filled execution
+        Recorder->>State: from_open(record)
+        State-->>Recorder: open trade state
+        Recorder->>Recorder: cache _trades[(task_id, trade_id)]
+    else CLOSE_TRADE with filled execution
+        Recorder->>Recorder: load cached TradeState
+        alt open state exists
+            Recorder->>State: apply_close(record)
+        else close arrived without open
+            Recorder->>State: from_close_without_open(record)
         end
-
-        alt event has no filled execution response
-            Recorder-->>Bus: event record only
-        else action is OPEN_TRADE
-            Recorder->>TradeState: from_open(record)
-            TradeState-->>Recorder: open trade state
-            Recorder->>Recorder: cache _trades[(task_id, trade_id)]
-            Recorder-->>Bus: open state cached
-        else action is CLOSE_TRADE
-            Recorder->>Recorder: find _trades[(task_id, trade_id)]
-            alt open state exists
-                Recorder->>TradeState: apply_close(record)
-            else close arrived without open
-                Recorder->>TradeState: from_close_without_open(record)
-                TradeState-->>Recorder: partial closed state
-                Recorder->>Recorder: cache partial state
-            end
-
-            Recorder->>TradeState: summary()
-            TradeState-->>Recorder: TradeSummary
-            Recorder->>Recorder: _save_trade(summary)
-            loop configured result stores
-                Recorder->>Store: save_trade(summary)
-            end
-
-            alt summary.cycle_id is present
-                Recorder->>Recorder: _cycle_summary(task_id, cycle_id)
-                Recorder-->>Recorder: CycleSummary
-                Recorder->>Recorder: _save_cycle(summary)
-                loop configured result stores
-                    Recorder->>Store: save_cycle(summary)
-                end
-            end
+        State-->>Recorder: closed or partial state
+        Recorder->>Memory: save_trade(summary)
+        Recorder->>Recorder: queue trade summary
+        alt cycle_id is present
+            Recorder->>Recorder: aggregate cycle summary
+            Recorder->>Memory: save_cycle(summary)
+            Recorder->>Recorder: queue cycle summary
         end
+    else request only, hold, or unfilled execution
+        Recorder-->>Bus: event record persisted in memory
+    end
+
+    Recorder->>Recorder: _flush_if_due()
+    alt pending_count >= flush_every
+        Recorder->>Batch: create from queued records
+        loop external stores
+            Recorder->>Store: save_batch(batch)
+        end
+        Recorder->>Recorder: clear queued records
+    else not due
+        Recorder-->>Bus: keep queued records
     end
 
     Runner->>Recorder: on_task_finished(terminal task)
-    Recorder->>Recorder: cycle_summaries(task.id)
-    loop each cycle summary
-        Recorder->>Store: save_cycle(summary)
-    end
+    Recorder->>Recorder: persist open trade summaries
+    Recorder->>Memory: save_trade(open summary)
+    Recorder->>Recorder: queue open trade summary
+    Recorder->>Recorder: aggregate final cycle summaries
+    Recorder->>Memory: save_cycle(summary)
+    Recorder->>Recorder: queue cycle summary
     Recorder->>Recorder: task_summary(task)
-    Recorder-->>Recorder: TaskSummary
-    Recorder->>Recorder: _save_task(summary)
-    loop configured result stores
-        Recorder->>Store: save_task(summary)
+    Recorder->>Memory: save_task(summary)
+    Recorder->>Recorder: queue task summary
+    Recorder->>Recorder: flush()
+    Recorder->>Batch: create final ResultBatch
+    loop external stores
+        Recorder->>Store: save_batch(batch)
     end
 
-    Note over Store,Sql: ResultStore may be memory, CSV, SQL, or another implementation.
-    alt InMemoryResultStore
-        Store->>Memory: append event/metric or upsert trade/cycle/task in dict
-    else CsvResultStore
-        Store->>Csv: map record to row and append CSV
+    alt CsvResultStore
+        Store->>Csv: append event/metric rows
+        Store->>Csv: upsert trade/cycle/task rows by logical key
     else SqlResultStore
-        Store->>Sql: map record to row, delete existing key, insert row
+        Store->>Sql: write batch in one transaction
+        Store->>Sql: replace keyed summaries and insert append-only rows
+    else custom ResultStore
+        Store->>Store: apply ResultBatch atomically if supported
     end

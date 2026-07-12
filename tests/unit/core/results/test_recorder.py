@@ -265,7 +265,7 @@ def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path
     )
     csv_store = CsvResultStore(tmp_path / "results")
     sql_store = SqlResultStore("sqlite:///:memory:")
-    recorder = TaskResultRecorder(stores=(csv_store, sql_store))
+    recorder = TaskResultRecorder(stores=(csv_store, sql_store), flush_every=100)
 
     with TaskManager(max_workers=1, observers=(recorder,)) as manager:
         run = manager.start_backtest(

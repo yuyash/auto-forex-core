@@ -1,6 +1,14 @@
 from datetime import UTC, datetime
 
-from core import Confidence, Order, OrderSide, OrderStatus, StrategyExecutionResponse, Units
+from core import (
+    BrokerOrderId,
+    Confidence,
+    Order,
+    OrderSide,
+    OrderStatus,
+    StrategyExecutionResponse,
+    Units,
+)
 from core.events import (
     EventMessageKey,
     EventSource,
@@ -89,6 +97,53 @@ class TestStrategyEvent:
         assert aggregate.response is report
         assert aggregate.action == StrategyAction.OPEN_TRADE
         assert aggregate.metadata["filled_entry_price"] == "150.11 JPY"
+
+    def test_strategy_execution_response_propagates_order_metadata(self) -> None:
+        task_id = new_uuid()
+        event = StrategyEventRequest(
+            task_id=task_id,
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            action=StrategyAction.OPEN_TRADE,
+            instrument=CurrencyPair.of("USD_JPY"),
+            side=TradeSide.BUY,
+            units=Units("1000"),
+            price=Money.of("150.11", "JPY"),
+            display_id="C1L1R0B1",
+            metadata=Metadata.of(strategy_key="request"),
+        )
+
+        report = StrategyExecutionResponse(
+            event=event,
+            order=Order(
+                instrument=CurrencyPair.of("USD_JPY"),
+                side=OrderSide.BUY,
+                units=Units("1000"),
+                price=Money.of("150.11", "JPY"),
+                status=OrderStatus.FILLED,
+                broker_order_id=BrokerOrderId.of("broker-order-1"),
+                filled_units=Units("1000"),
+                metadata=Metadata.of(
+                    broker_trade_id="broker-trade-1",
+                    logical_trade_id="C1L1R0B1",
+                ),
+            ),
+            metadata=Metadata.of(execution_channel="paper"),
+        )
+        aggregate = StrategyEvent(
+            task_id=event.task_id,
+            request=event,
+            response=report,
+            instrument=event.instrument,
+        )
+
+        assert report.metadata["execution_channel"] == "paper"
+        assert report.metadata["broker_trade_id"] == "broker-trade-1"
+        assert report.metadata["logical_trade_id"] == "C1L1R0B1"
+        assert report.metadata["broker_order_id"] == "broker-order-1"
+        assert report.metadata["order_status"] == "filled"
+        assert aggregate.metadata["strategy_key"] == "request"
+        assert aggregate.metadata["broker_trade_id"] == "broker-trade-1"
+        assert aggregate.metadata["broker_order_id"] == "broker-order-1"
 
     def test_strategy_execution_response_records_rebuild_fill_as_entry_and_rebuild(
         self,

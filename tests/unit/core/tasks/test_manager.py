@@ -22,6 +22,7 @@ from core import (
     StrategyAlreadyRunningError,
     StrategyContext,
     StrategyResult,
+    StrategyState,
     TaskManager,
     TaskProfilingConfig,
     TaskProgress,
@@ -47,11 +48,35 @@ class OneTickDataSource(DataSource):
         yield self.tick
 
 
+class TwoTickDataSource(DataSource):
+    def __init__(self, ticks: tuple[Tick, Tick]) -> None:
+        self._ticks = ticks
+
+    def _raw_ticks(
+        self,
+        *,
+        instrument: CurrencyPair,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> Iterable[Tick]:
+        _ = instrument
+        _ = start_at
+        _ = end_at
+        yield from self._ticks
+
+
 class HoldStrategy(Strategy):
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         _ = tick
         _ = context
         return StrategyResult()
+
+
+class CountingStateStrategy(Strategy):
+    def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
+        _ = tick
+        seen_ticks = int(context.state.get("seen_ticks", 0)) + 1
+        return StrategyResult(state=StrategyState.of(seen_ticks=seen_ticks))
 
 
 class FailingFinishedObserver:
@@ -180,6 +205,51 @@ def test_task_manager_start_backtest_returns_task_run_handle() -> None:
     assert run.current().status == TaskStatus.COMPLETED
     assert final_task.id == run.id
     assert final_task.status == TaskStatus.COMPLETED
+
+
+def test_task_manager_configures_strategy_request_timeout() -> None:
+    timeout = timedelta(seconds=30)
+
+    manager = TaskManager(strategy_request_timeout=timeout)
+    try:
+        assert manager.event_bus.strategy_request_timeout == timeout
+    finally:
+        manager.shutdown()
+
+
+def test_task_manager_persists_latest_strategy_state() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    ticks = (
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            bid=Money.of("150.10", "JPY"),
+            ask=Money.of("150.12", "JPY"),
+        ),
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, 1, tzinfo=UTC),
+            bid=Money.of("150.20", "JPY"),
+            ask=Money.of("150.22", "JPY"),
+        ),
+    )
+
+    with TaskManager(max_workers=1) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=TwoTickDataSource(ticks),
+            strategy=CountingStateStrategy(name="counting"),
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.COMPLETED
+    assert final_task.strategy_state == StrategyState.of(seen_ticks=2)
 
 
 def test_task_manager_rejects_active_strategy_instance_reuse() -> None:

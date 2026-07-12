@@ -23,24 +23,21 @@ sequenceDiagram
 
     alt progress reporter omitted
         Manager->>Future: result(timeout)
-        Future-->>Manager: final task
         Manager->>Registry: get(task_id)
         Registry-->>Manager: latest task
         Manager-->>Run: latest task
     else progress reporter provided
-        Manager->>Manager: progress(task_id)
-        Manager->>Progress: on_start(progress)
+        Manager->>Progress: on_start(progress(task_id))
         loop until worker future is done
             Manager->>Future: result(timeout=refresh_seconds)
             alt refresh timeout
-                Manager->>Manager: progress(task_id)
-                Manager->>Progress: on_update(progress)
+                Manager->>Progress: on_update(progress(task_id))
             else worker completed
-                Future-->>Manager: final task
-                Manager->>Manager: progress(task_id)
-                Manager->>Progress: on_finish(progress)
+                Manager->>Progress: on_finish(progress(task_id))
             end
         end
+        Manager->>Registry: get(task_id)
+        Registry-->>Manager: latest task
         Manager-->>Run: latest task
     end
 
@@ -53,16 +50,18 @@ sequenceDiagram
         Lifecycle->>Bus: publish(TASK_STARTED)
 
         Runner->>Pipeline: context(task)
-        Pipeline-->>Runner: StrategyContext
+        Pipeline-->>Runner: StrategyContext(state=task.strategy_state)
         Runner->>Strategy: on_start(context)
-        Strategy-->>Runner: StrategyResult
+        Strategy-->>Runner: StrategyResult(events, state?)
         Runner->>Pipeline: process_result(start_result, context)
         Pipeline-->>Runner: updated context
+        Runner->>Registry: save(task.with_strategy_state(context.state))
 
         Runner->>Source: ticks(instrument, start_at?, end_at?)
         Source-->>Runner: iterable tick stream
 
         loop each tick
+            Runner->>Bus: expire_pending_strategy_requests(task_id, tick.timestamp)
             alt pause requested
                 Runner->>Lifecycle: pause_current()
                 Lifecycle->>Registry: save(task.pause(clock))
@@ -72,16 +71,21 @@ sequenceDiagram
                 Runner->>Lifecycle: stop_current()
                 Lifecycle->>Registry: save(task.stop(clock))
                 Lifecycle->>Bus: publish(TASK_STOPPED)
+                Runner->>Bus: clear_pending_strategy_requests(task_id, reason)
                 Runner->>Observer: on_task_finished(stopped task)
                 Runner-->>Profiler: stopped task
             else running
                 Note over Runner,Pipeline: Tick processing is detailed in tick_processing.mmd
+                Runner->>Registry: save(task.with_strategy_state(context.state))
+                Runner->>Observer: on_tick(task, tick)
             end
         end
 
+        Runner->>Bus: expire_pending_strategy_requests(task_id, end_at)
         Runner->>Strategy: on_stop(context)
-        Strategy-->>Runner: StrategyResult
+        Strategy-->>Runner: StrategyResult(events, state?)
         Runner->>Pipeline: process_result(stop_result, context)
+        Runner->>Registry: save(task.with_strategy_state(context.state))
         alt finite backtest
             Runner->>Lifecycle: complete_current()
             Lifecycle->>Registry: save(task.complete(clock))
@@ -91,6 +95,7 @@ sequenceDiagram
             Lifecycle->>Registry: save(task.stop(clock))
             Lifecycle->>Bus: publish(TASK_STOPPED)
         end
+        Runner->>Bus: clear_pending_strategy_requests(task_id, reason)
         Runner->>Observer: on_task_finished(terminal task)
         Runner-->>Profiler: terminal task
 
@@ -98,6 +103,7 @@ sequenceDiagram
             Runner->>Lifecycle: fail_current(exception)
             Lifecycle->>Registry: save(task.fail(exception, clock))
             Lifecycle->>Bus: publish(TASK_FAILED)
+            Runner->>Bus: clear_pending_strategy_requests(task_id, reason)
             Runner->>Observer: on_task_finished(failed task)
             Runner-->>Profiler: failed task
         end

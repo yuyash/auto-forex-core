@@ -22,7 +22,7 @@ from core.results.models import (
     TaskSummary,
     TradeSummary,
 )
-from core.results.stores import InMemoryResultStore, ProfitMetricStore, ResultStore
+from core.results.stores import InMemoryResultStore, ProfitMetricStore, ResultBatch, ResultStore
 from core.sources.models import Tick
 from core.strategies.execution import (
     StrategyAction,
@@ -202,16 +202,25 @@ class TaskResultRecorder:
         stores: tuple[ResultStore, ...] | None = None,
         metric_stores: tuple[ProfitMetricStore, ...] = (),
         metric_interval: timedelta | None = None,
+        flush_every: int = 1,
     ) -> None:
         self.memory = InMemoryResultStore()
-        self.stores = (self.memory, *(stores or ()))
+        self.external_stores = tuple(stores or ())
+        self.stores = (self.memory, *self.external_stores)
         self.metric_stores = metric_stores
         self.metric_interval = metric_interval
+        self.flush_every = self._flush_every(flush_every)
         if metric_interval is not None:
             self._metric_interval_seconds(metric_interval)
         self._trades: dict[tuple[UUID, str], TradeState] = {}
         self._last_metric_at: dict[UUID, AwareDatetime] = {}
         self._task_status: dict[UUID, str] = {}
+        self._pending_events: list[StrategyEventRecord] = []
+        self._pending_trades: list[TradeSummary] = []
+        self._pending_cycles: list[CycleSummary] = []
+        self._pending_tasks: list[TaskSummary] = []
+        self._pending_metrics: list[ProfitMetric] = []
+        self._pending_count = 0
         self._lock = RLock()
 
     def handle(self, event: Event) -> None:
@@ -250,6 +259,17 @@ class TaskResultRecorder:
             task_summary = self.task_summary(task)
             if task_summary is not None:
                 self._save_task(task_summary)
+            self.flush()
+
+    def flush(self) -> None:
+        """Flush buffered result records to external stores."""
+        with self._lock:
+            batch = self._pending_batch()
+            if batch.is_empty:
+                return
+            for store in self.external_stores:
+                store.save_batch(batch)
+            self._clear_pending()
 
     def event_records(self, task_id: UUID | None = None) -> tuple[StrategyEventRecord, ...]:
         """Return event records captured in memory."""
@@ -453,26 +473,68 @@ class TaskResultRecorder:
         )
 
     def _save_event(self, record: StrategyEventRecord) -> None:
-        for store in self.stores:
-            store.save_event(record)
+        self.memory.save_event(record)
+        self._queue_event(record)
 
     def _save_trade(self, summary: TradeSummary) -> None:
-        for store in self.stores:
-            store.save_trade(summary)
+        self.memory.save_trade(summary)
+        self._queue_trade(summary)
 
     def _save_cycle(self, summary: CycleSummary) -> None:
-        for store in self.stores:
-            store.save_cycle(summary)
+        self.memory.save_cycle(summary)
+        self._queue_cycle(summary)
 
     def _save_task(self, summary: TaskSummary) -> None:
-        for store in self.stores:
-            store.save_task(summary)
+        self.memory.save_task(summary)
+        self._queue_task(summary)
 
     def _save_metric(self, metric: ProfitMetric) -> None:
-        for store in self.stores:
-            store.save_metric(metric)
+        self.memory.save_metric(metric)
+        self._queue_metric(metric)
         for store in self.metric_stores:
             store.save_metric(metric)
+
+    def _queue_event(self, record: StrategyEventRecord) -> None:
+        self._pending_events.append(record)
+        self._flush_if_due()
+
+    def _queue_trade(self, summary: TradeSummary) -> None:
+        self._pending_trades.append(summary)
+        self._flush_if_due()
+
+    def _queue_cycle(self, summary: CycleSummary) -> None:
+        self._pending_cycles.append(summary)
+        self._flush_if_due()
+
+    def _queue_task(self, summary: TaskSummary) -> None:
+        self._pending_tasks.append(summary)
+        self._flush_if_due()
+
+    def _queue_metric(self, metric: ProfitMetric) -> None:
+        self._pending_metrics.append(metric)
+        self._flush_if_due()
+
+    def _flush_if_due(self) -> None:
+        self._pending_count += 1
+        if self._pending_count >= self.flush_every:
+            self.flush()
+
+    def _pending_batch(self) -> ResultBatch:
+        return ResultBatch(
+            events=tuple(self._pending_events),
+            trades=tuple(self._pending_trades),
+            cycles=tuple(self._pending_cycles),
+            tasks=tuple(self._pending_tasks),
+            metrics=tuple(self._pending_metrics),
+        )
+
+    def _clear_pending(self) -> None:
+        self._pending_events.clear()
+        self._pending_trades.clear()
+        self._pending_cycles.clear()
+        self._pending_tasks.clear()
+        self._pending_metrics.clear()
+        self._pending_count = 0
 
     @staticmethod
     def _filled_strategy_event(event: StrategyEvent) -> bool:
@@ -562,3 +624,10 @@ class TaskResultRecorder:
             msg = "metric interval must be greater than zero"
             raise ValueError(msg)
         return seconds
+
+    @staticmethod
+    def _flush_every(value: int) -> int:
+        if value <= 0:
+            msg = "flush_every must be greater than zero"
+            raise ValueError(msg)
+        return value

@@ -14,7 +14,12 @@ sequenceDiagram
     participant Pool as ThreadPoolExecutor
     participant Run as TaskRun
 
-    App->>Manager: __init__(registry?, event_bus?, profiling?, observers?)
+    App->>Manager: __init__(registry?, event_bus?, profiling?, observers?, strategy_request_timeout?)
+    alt event_bus omitted
+        Manager->>Bus: create(strategy_request_timeout)
+    else event_bus supplied and timeout supplied
+        Manager->>Bus: set strategy_request_timeout
+    end
     loop each observer
         alt observer implements handle(event)
             Manager->>Bus: subscribe(observer)
@@ -33,12 +38,13 @@ sequenceDiagram
     end
 
     Manager->>Task: from_definition(definition, clock)
-    Task-->>Manager: task
+    Task-->>Manager: task(strategy_state=empty)
     Manager->>Task: start(clock)
     Task-->>Manager: started task
     Manager->>Registry: save(started task)
 
     Manager->>Manager: _launch(started task, runtime dependencies)
+    Manager->>Manager: reject active task or active strategy reuse
     Manager->>Control: create()
     Manager->>Profiler: _profiler_for(task, type, profiling)
     Manager->>Runner: _runner(task, data_source, strategy, broker, clock, profiler)

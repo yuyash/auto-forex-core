@@ -12,6 +12,7 @@ from core.results.stores import (
     CsvResultStore,
     InMemoryResultStore,
     ProfitMetricStore,
+    ResultBatch,
     ResultStore,
     SqlResultStore,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "InMemoryResultStore",
     "ProfitMetric",
     "ProfitMetricStore",
+    "ResultBatch",
     "ResultStore",
     "SqlResultStore",
     "StrategyEventRecord",
