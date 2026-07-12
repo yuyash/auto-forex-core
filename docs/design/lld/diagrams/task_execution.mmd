@@ -1,0 +1,107 @@
+sequenceDiagram
+    title Core Task Execution
+    autonumber
+
+    actor App
+    participant Run as TaskRun
+    participant Manager as TaskManager
+    participant Future as Future[Task]
+    participant Progress as TaskProgressReporter
+    participant Profiler as TaskProfiler
+    participant Runner as TaskRunner
+    participant Lifecycle as TaskLifecycle
+    participant Registry as TaskRegistry
+    participant Bus as EventBus
+    participant Strategy as Strategy
+    participant Pipeline as StrategyExecutionPipeline
+    participant Source as DataSource
+    participant Observer as TaskObserver
+
+    App->>Run: wait(timeout?, progress?)
+    Run->>Manager: wait(task_id, timeout, progress)
+    Manager->>Manager: _runtime(task_id)
+
+    alt progress reporter omitted
+        Manager->>Future: result(timeout)
+        Future-->>Manager: final task
+        Manager->>Registry: get(task_id)
+        Registry-->>Manager: latest task
+        Manager-->>Run: latest task
+    else progress reporter provided
+        Manager->>Manager: progress(task_id)
+        Manager->>Progress: on_start(progress)
+        loop until worker future is done
+            Manager->>Future: result(timeout=refresh_seconds)
+            alt refresh timeout
+                Manager->>Manager: progress(task_id)
+                Manager->>Progress: on_update(progress)
+            else worker completed
+                Future-->>Manager: final task
+                Manager->>Manager: progress(task_id)
+                Manager->>Progress: on_finish(progress)
+            end
+        end
+        Manager-->>Run: latest task
+    end
+
+    par worker thread
+        Future->>Profiler: run(runner.run, control)
+        Profiler->>Runner: run(control)
+        Runner->>Lifecycle: ensure_running()
+        Lifecycle->>Registry: get(task_id)
+        Lifecycle->>Registry: save(task.start(clock))
+        Lifecycle->>Bus: publish(TASK_STARTED)
+
+        Runner->>Pipeline: context(task)
+        Pipeline-->>Runner: StrategyContext
+        Runner->>Strategy: on_start(context)
+        Strategy-->>Runner: StrategyResult
+        Runner->>Pipeline: process_result(start_result, context)
+        Pipeline-->>Runner: updated context
+
+        Runner->>Source: ticks(instrument, start_at?, end_at?)
+        Source-->>Runner: iterable tick stream
+
+        loop each tick
+            alt pause requested
+                Runner->>Lifecycle: pause_current()
+                Lifecycle->>Registry: save(task.pause(clock))
+                Lifecycle->>Bus: publish(TASK_PAUSED)
+                Runner-->>Profiler: paused task
+            else stop requested
+                Runner->>Lifecycle: stop_current()
+                Lifecycle->>Registry: save(task.stop(clock))
+                Lifecycle->>Bus: publish(TASK_STOPPED)
+                Runner->>Observer: on_task_finished(stopped task)
+                Runner-->>Profiler: stopped task
+            else running
+                Note over Runner,Pipeline: Tick processing is detailed in tick_processing.mmd
+            end
+        end
+
+        Runner->>Strategy: on_stop(context)
+        Strategy-->>Runner: StrategyResult
+        Runner->>Pipeline: process_result(stop_result, context)
+        alt finite backtest
+            Runner->>Lifecycle: complete_current()
+            Lifecycle->>Registry: save(task.complete(clock))
+            Lifecycle->>Bus: publish(TASK_COMPLETED)
+        else live trading stream ended
+            Runner->>Lifecycle: stop_current()
+            Lifecycle->>Registry: save(task.stop(clock))
+            Lifecycle->>Bus: publish(TASK_STOPPED)
+        end
+        Runner->>Observer: on_task_finished(terminal task)
+        Runner-->>Profiler: terminal task
+
+        alt exception escapes runner body
+            Runner->>Lifecycle: fail_current(exception)
+            Lifecycle->>Registry: save(task.fail(exception, clock))
+            Lifecycle->>Bus: publish(TASK_FAILED)
+            Runner->>Observer: on_task_finished(failed task)
+            Runner-->>Profiler: failed task
+        end
+
+        Profiler->>Profiler: write cProfile / pyinstrument outputs when enabled
+        Profiler-->>Future: final task
+    end

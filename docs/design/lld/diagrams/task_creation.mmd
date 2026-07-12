@@ -1,0 +1,50 @@
+sequenceDiagram
+    title Core Task Creation
+    autonumber
+
+    actor App
+    participant Manager as TaskManager
+    participant Bus as EventBus
+    participant Clock as Clock
+    participant Task as ExecutableTask
+    participant Registry as TaskRegistry
+    participant Control as TaskExecutionControl
+    participant Profiler as TaskProfiler
+    participant Runner as TaskRunner
+    participant Pool as ThreadPoolExecutor
+    participant Run as TaskRun
+
+    App->>Manager: __init__(registry?, event_bus?, profiling?, observers?)
+    loop each observer
+        alt observer implements handle(event)
+            Manager->>Bus: subscribe(observer)
+        end
+    end
+
+    alt backtest task
+        App->>Manager: start_backtest(definition, data_source, strategy, broker?, profiling?)
+        Manager->>Clock: ManualClock(definition.start_at)
+    else trading task
+        App->>Manager: start_trading(definition, data_source, strategy, broker?, profiling?)
+        alt dry_run is false and broker is missing
+            Manager-->>App: ValueError
+        end
+        Manager->>Clock: SystemClock()
+    end
+
+    Manager->>Task: from_definition(definition, clock)
+    Task-->>Manager: task
+    Manager->>Task: start(clock)
+    Task-->>Manager: started task
+    Manager->>Registry: save(started task)
+
+    Manager->>Manager: _launch(started task, runtime dependencies)
+    Manager->>Control: create()
+    Manager->>Profiler: _profiler_for(task, type, profiling)
+    Manager->>Runner: _runner(task, data_source, strategy, broker, clock, profiler)
+    Manager->>Pool: submit(profiler.run, runner.run, control)
+    Pool-->>Manager: Future[Task]
+    Manager->>Manager: store TaskRuntime in _runtimes[task.id]
+
+    Manager-->>Run: TaskRun(task, manager)
+    Run-->>App: started run handle

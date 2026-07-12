@@ -35,7 +35,7 @@ type Task = ExecutableTask
 
 
 @dataclass(slots=True)
-class _TradeState:
+class TradeState:
     task_id: UUID
     trade_id: str
     instrument: CurrencyPair
@@ -65,7 +65,7 @@ class _TradeState:
     realized_pl: Money | None = None
 
     @classmethod
-    def from_open(cls, record: StrategyEventRecord) -> _TradeState:
+    def from_open(cls, record: StrategyEventRecord) -> TradeState:
         """Create trade state from an open event record."""
         return cls(
             task_id=record.task_id,
@@ -92,7 +92,7 @@ class _TradeState:
         )
 
     @classmethod
-    def from_close_without_open(cls, record: StrategyEventRecord) -> _TradeState:
+    def from_close_without_open(cls, record: StrategyEventRecord) -> TradeState:
         """Create partial trade state when the recorder did not see the open event."""
         state = cls(
             task_id=record.task_id,
@@ -209,7 +209,7 @@ class TaskResultRecorder:
         self.metric_interval = metric_interval
         if metric_interval is not None:
             self._metric_interval_seconds(metric_interval)
-        self._trades: dict[tuple[UUID, str], _TradeState] = {}
+        self._trades: dict[tuple[UUID, str], TradeState] = {}
         self._last_metric_at: dict[UUID, AwareDatetime] = {}
         self._task_status: dict[UUID, str] = {}
         self._lock = RLock()
@@ -373,14 +373,14 @@ class TaskResultRecorder:
         )
 
     def _record_open(self, record: StrategyEventRecord) -> None:
-        state = _TradeState.from_open(record)
+        state = TradeState.from_open(record)
         self._trades[(record.task_id, state.trade_id)] = state
 
     def _record_close(self, record: StrategyEventRecord) -> None:
         key = (record.task_id, record.trade_id)
         state = self._trades.get(key)
         if state is None:
-            state = _TradeState.from_close_without_open(record)
+            state = TradeState.from_close_without_open(record)
             self._trades[key] = state
         else:
             state.apply_close(record)

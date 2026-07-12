@@ -1,0 +1,80 @@
+sequenceDiagram
+    title Result Aggregation and Persistence
+    autonumber
+
+    participant Bus as EventBus
+    participant Recorder as TaskResultRecorder
+    participant TradeState as TradeState
+    participant Store as ResultStore
+    participant Memory as InMemoryResultStore
+    participant Csv as CsvResultStore
+    participant Sql as SqlResultStore
+    participant Runner as TaskRunner
+
+    Bus->>Recorder: handle(event)
+    alt event is not StrategyEvent
+        Recorder-->>Bus: ignore
+    else event is StrategyEvent
+        Recorder->>Recorder: _record_from_event(event)
+        Recorder-->>Recorder: StrategyEventRecord
+
+        Recorder->>Recorder: _save_event(record)
+        loop configured result stores
+            Recorder->>Store: save_event(record)
+        end
+
+        alt event has no filled execution response
+            Recorder-->>Bus: event record only
+        else action is OPEN_TRADE
+            Recorder->>TradeState: from_open(record)
+            TradeState-->>Recorder: open trade state
+            Recorder->>Recorder: cache _trades[(task_id, trade_id)]
+            Recorder-->>Bus: open state cached
+        else action is CLOSE_TRADE
+            Recorder->>Recorder: find _trades[(task_id, trade_id)]
+            alt open state exists
+                Recorder->>TradeState: apply_close(record)
+            else close arrived without open
+                Recorder->>TradeState: from_close_without_open(record)
+                TradeState-->>Recorder: partial closed state
+                Recorder->>Recorder: cache partial state
+            end
+
+            Recorder->>TradeState: summary()
+            TradeState-->>Recorder: TradeSummary
+            Recorder->>Recorder: _save_trade(summary)
+            loop configured result stores
+                Recorder->>Store: save_trade(summary)
+            end
+
+            alt summary.cycle_id is present
+                Recorder->>Recorder: _cycle_summary(task_id, cycle_id)
+                Recorder-->>Recorder: CycleSummary
+                Recorder->>Recorder: _save_cycle(summary)
+                loop configured result stores
+                    Recorder->>Store: save_cycle(summary)
+                end
+            end
+        end
+    end
+
+    Runner->>Recorder: on_task_finished(terminal task)
+    Recorder->>Recorder: cycle_summaries(task.id)
+    loop each cycle summary
+        Recorder->>Store: save_cycle(summary)
+    end
+    Recorder->>Recorder: task_summary(task)
+    Recorder-->>Recorder: TaskSummary
+    Recorder->>Recorder: _save_task(summary)
+    loop configured result stores
+        Recorder->>Store: save_task(summary)
+    end
+
+    Note over Store,Sql: ResultStore may be memory, CSV, SQL, or another implementation.
+    alt InMemoryResultStore
+        Store->>Memory: append event/metric or upsert trade/cycle/task in dict
+    else CsvResultStore
+        Store->>Csv: map record to row and append CSV
+    else SqlResultStore
+        Store->>Sql: map record to row, delete existing key, insert row
+    end

@@ -1,0 +1,47 @@
+sequenceDiagram
+    title Profit Metric Collection
+    autonumber
+
+    participant Runner as TaskRunner
+    participant Recorder as TaskResultRecorder
+    participant TradeState as TradeState
+    participant Metric as ProfitMetric
+    participant Store as ResultStore
+    participant MetricStore as ProfitMetricStore
+
+    Runner->>Recorder: on_tick(task, tick)
+    alt metric_interval is None
+        Recorder-->>Runner: return without metric
+    else metric_interval configured
+        Recorder->>Recorder: _metric_due(task.id, tick.timestamp)
+        alt metric is not due
+            Recorder-->>Runner: return without metric
+        else metric is due
+            Recorder->>Recorder: select _trades for task.id
+            Recorder->>Recorder: split closed and open trades
+
+            loop each closed trade
+                Recorder->>Recorder: sum realized_pl in quote currency
+            end
+
+            loop each open trade
+                Recorder->>TradeState: unrealized_pl(tick)
+                TradeState-->>Recorder: Money
+            end
+            Recorder->>Recorder: sum unrealized_pl in quote currency
+
+            Recorder->>Metric: create(metric_id, realized_pl, unrealized_pl, total_pl)
+            Metric-->>Recorder: ProfitMetric
+
+            Recorder->>Recorder: _save_metric(metric)
+            loop self.stores
+                Recorder->>Store: save_metric(metric)
+            end
+            loop metric_stores
+                Recorder->>MetricStore: save_metric(metric)
+            end
+
+            Recorder->>Recorder: _last_metric_at[task.id] = tick.timestamp
+            Recorder-->>Runner: metric persisted
+        end
+    end
