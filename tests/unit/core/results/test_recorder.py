@@ -239,7 +239,11 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
         metric_interval=timedelta(minutes=1),
     )
 
-    with TaskManager(max_workers=1, observers=(recorder,)) as manager:
+    with TaskManager(
+        max_workers=1,
+        observers=(recorder,),
+        event_handlers=(recorder,),
+    ) as manager:
         run = manager.start_backtest(
             definition,
             data_source=TwoTickDataSource(ticks),
@@ -290,8 +294,8 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     assert event_count == 2
     assert trade_count == 1
     assert metric_count == 2
-    assert recorder._trades == {}
-    assert recorder._last_metric_at == {}
+    assert recorder.ledger.trades == {}
+    assert recorder.metrics.last_metric_at == {}
 
 
 def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path) -> None:
@@ -320,7 +324,11 @@ def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path
     sql_store = SqlResultStore("sqlite:///:memory:")
     recorder = TaskResultRecorder(stores=(csv_store, sql_store), flush_every=100)
 
-    with TaskManager(max_workers=1, observers=(recorder,)) as manager:
+    with TaskManager(
+        max_workers=1,
+        observers=(recorder,),
+        event_handlers=(recorder,),
+    ) as manager:
         run = manager.start_backtest(
             definition,
             data_source=TwoTickDataSource(ticks),
@@ -341,7 +349,7 @@ def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path
     with sql_store.engine.connect() as connection:
         trade_count = connection.execute(text("select count(*) from trade_summaries")).scalar_one()
     assert trade_count == 1
-    assert recorder._trades == {}
+    assert recorder.ledger.trades == {}
 
 
 def test_task_result_recorder_keeps_store_buffers_independent_on_flush_failure() -> None:

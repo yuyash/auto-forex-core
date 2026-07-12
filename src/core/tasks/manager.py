@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import TracebackType
-from typing import Self, cast
+from typing import Self
 from uuid import UUID
 
 from core.clock import Clock
@@ -104,6 +104,7 @@ class TaskManager:
         event_bus: EventBus | None = None,
         profiling: TaskProfilingConfig | None = None,
         observers: Iterable[TaskObserver] = (),
+        event_handlers: Iterable[EventHandler] = (),
         max_workers: int = 4,
         strategy_request_timeout: timedelta | None = None,
         strategy_request_timeout_check_interval: timedelta | None = None,
@@ -114,9 +115,9 @@ class TaskManager:
             self.event_bus.strategy_request_timeout = strategy_request_timeout
         self.profiling = profiling or TaskProfilingConfig()
         self.observers = tuple(observers)
-        for observer in self.observers:
-            if hasattr(observer, "handle"):
-                self.event_bus.subscribe(cast(EventHandler, observer))
+        self.event_handlers = tuple(event_handlers)
+        for handler in self.event_handlers:
+            self.event_bus.subscribe(handler)
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self.runtimes = TaskRuntimeRegistry()
         self.runner_factory = TaskRunnerFactory(

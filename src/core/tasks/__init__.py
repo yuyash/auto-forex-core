@@ -1,8 +1,5 @@
 """Task domain APIs."""
 
-from importlib import import_module
-from typing import Any
-
 from core.tasks.definitions import (
     BacktestTaskDefinition,
     BaseTaskDefinition,
@@ -33,18 +30,13 @@ from core.tasks.state import (
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "DEFAULT_TASK_STATE_MACHINE",
-    "BacktestRunner",
     "BacktestTaskDefinition",
     "BaseTaskDefinition",
     "ExecutableTask",
     "InMemoryTaskRegistry",
-    "StrategyAlreadyRunningError",
     "TaskAction",
-    "TaskAlreadyRunningError",
     "TaskDefinition",
-    "TaskExecutionControl",
     "TaskFailure",
-    "TaskManager",
     "TaskNotFoundError",
     "TaskObserver",
     "TaskProfile",
@@ -53,35 +45,11 @@ __all__ = [
     "TaskProgress",
     "TaskProgressReporter",
     "TaskRegistry",
-    "TaskRun",
-    "TaskRuntime",
     "TaskStateError",
     "TaskStateMachine",
     "TaskStatus",
     "TaskTransition",
     "TaskType",
     "TqdmProgressReporter",
-    "TradingRunner",
     "TradingTaskDefinition",
 ]
-
-_LAZY_EXPORTS = {
-    "BacktestRunner": "core.tasks.runner",
-    "TaskAlreadyRunningError": "core.tasks.manager",
-    "TaskExecutionControl": "core.tasks.runner",
-    "TaskManager": "core.tasks.manager",
-    "TaskRun": "core.tasks.manager",
-    "TaskRuntime": "core.tasks.runtime",
-    "StrategyAlreadyRunningError": "core.tasks.manager",
-    "TradingRunner": "core.tasks.runner",
-}
-
-
-def __getattr__(name: str) -> Any:
-    """Load execution infrastructure only when explicitly requested."""
-    module_name = _LAZY_EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(name)
-    value = getattr(import_module(module_name), name)
-    globals()[name] = value
-    return value

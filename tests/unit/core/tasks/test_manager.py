@@ -674,9 +674,11 @@ def test_task_run_profile_can_write_cprofile_output(tmp_path: Path) -> None:
         profile = run.profile()
 
     assert final_task.status == TaskStatus.COMPLETED
-    assert profile.cprofile_output_path == tmp_path / f"{run.id}.prof"
-    assert profile.cprofile_output_path.exists()
-    assert profile.cprofile_output_path.stat().st_size > 0
+    cprofile_output_path = profile.cprofile_output_path
+    assert cprofile_output_path is not None
+    assert cprofile_output_path == tmp_path / f"{run.id}.prof"
+    assert cprofile_output_path.exists()
+    assert cprofile_output_path.stat().st_size > 0
 
 
 def test_task_run_profile_can_write_pyinstrument_output(
@@ -718,8 +720,10 @@ def test_task_run_profile_can_write_pyinstrument_output(
         profile = run.profile()
 
     assert final_task.status == TaskStatus.COMPLETED
-    assert profile.pyinstrument_output_path == tmp_path / f"{run.id}.html"
-    assert profile.pyinstrument_output_path.read_text(encoding="utf-8") == (
+    pyinstrument_output_path = profile.pyinstrument_output_path
+    assert pyinstrument_output_path is not None
+    assert pyinstrument_output_path == tmp_path / f"{run.id}.html"
+    assert pyinstrument_output_path.read_text(encoding="utf-8") == (
         "<html><body>profile 0.25</body></html>"
     )
 

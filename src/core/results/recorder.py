@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from threading import RLock
 from uuid import UUID
 
 from core.events.event import Event
-from core.results.ledger import TradeLedger, TradeState
+from core.results.ledger import TradeLedger
 from core.results.mapping import StrategyEventRecordMapper
 from core.results.metrics import ProfitMetricCollector
 from core.results.models import (
@@ -75,16 +75,6 @@ class TaskResultRecorder:
     def metric_interval(self) -> timedelta | None:
         """Return the configured metric interval."""
         return self.metrics.interval
-
-    @property
-    def _trades(self) -> dict[tuple[UUID, str], TradeState]:
-        """Return active ledger state for compatibility with current tests."""
-        return self.ledger.trades
-
-    @property
-    def _last_metric_at(self) -> dict[UUID, datetime]:
-        """Return metric timestamps for compatibility with current tests."""
-        return self.metrics.last_metric_at
 
     def handle(self, event: Event) -> None:
         """Handle events emitted by the event bus."""
