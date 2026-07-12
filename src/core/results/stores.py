@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.results.store_contracts import ProfitMetricStore, ResultBatch, ResultStore
+from core.results.store_contracts import ProfitMetricStore, ResultBatch, ResultReader, ResultStore
 from core.results.store_csv import CsvResultStore
 from core.results.store_memory import InMemoryResultStore
 from core.results.store_sql import SqlResultStore
@@ -12,6 +12,7 @@ __all__ = [
     "InMemoryResultStore",
     "ProfitMetricStore",
     "ResultBatch",
+    "ResultReader",
     "ResultStore",
     "SqlResultStore",
 ]

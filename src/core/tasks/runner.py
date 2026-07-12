@@ -15,6 +15,7 @@ from core.events.bus import EventBus
 from core.events.event import Event
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
+from core.models.money import Money
 from core.orders.executor import StrategyEventExecutor
 from core.ports.brokers import Broker
 from core.sources.base import DataSource
@@ -169,9 +170,17 @@ class StrategyExecutionPipeline:
             task_id=task.id,
             task_type=task.task_type,
             instrument=task.instrument,
+            account_balance=self.account_balance(task),
             state=task.strategy_state,
             metadata=Metadata.of(strategy_name=self.strategy.name),
         )
+
+    @staticmethod
+    def account_balance(task: Task) -> Money:
+        """Return the Core account balance available to strategy callbacks."""
+        if isinstance(task.definition, BacktestTaskDefinition):
+            return task.definition.initial_balance
+        return Money.of("10000", "USD")
 
     def process_result(
         self,

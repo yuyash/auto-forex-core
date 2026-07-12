@@ -54,3 +54,22 @@ class ResultStore(ProfitMetricStore, Protocol):
 
     def save_batch(self, batch: ResultBatch) -> None:
         """Persist a batch of result records."""
+
+
+class ResultReader(Protocol):
+    """Read boundary for persisted task result records and summaries."""
+
+    def event_records(self, task_id: object | None = None) -> tuple[StrategyEventRecord, ...]:
+        """Return strategy event records."""
+
+    def trade_summaries(self, task_id: object | None = None) -> tuple[TradeSummary, ...]:
+        """Return trade summaries."""
+
+    def cycle_summaries(self, task_id: object | None = None) -> tuple[CycleSummary, ...]:
+        """Return cycle summaries."""
+
+    def task_summaries(self, task_id: object | None = None) -> tuple[TaskSummary, ...]:
+        """Return task summaries."""
+
+    def profit_metrics(self, task_id: object | None = None) -> tuple[ProfitMetric, ...]:
+        """Return profit metrics."""

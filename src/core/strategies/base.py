@@ -14,7 +14,7 @@ from pydantic import Field
 from core.logging import get_logger
 from core.models.base import DomainModel
 from core.models.metadata import Metadata
-from core.models.money import CurrencyPair
+from core.models.money import CurrencyPair, Money
 from core.sources.models import Candle, Tick
 from core.strategies.execution import StrategyEventRequest, StrategyExecutionResponse
 from core.strategies.models import StrategyParameters, StrategyState
@@ -53,6 +53,7 @@ class StrategyContext(DomainModel):
     task_id: UUID
     task_type: TaskType
     instrument: CurrencyPair
+    account_balance: Money = Field(default_factory=lambda: Money.of("10000", "USD"))
     state: StrategyState = Field(default_factory=StrategyState)
     metadata: Metadata = Field(default_factory=Metadata)
 

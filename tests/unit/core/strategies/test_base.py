@@ -57,6 +57,7 @@ class TestBase:
 
         assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
         assert context.pip_size == Decimal("0.01")
+        assert context.account_balance == Money.of("10000", "USD")
         assert result.state == StrategyState.of(seen_ticks=1)
         assert result.events[0].task_id == context.task_id
         assert log_extra.strategy_name == "hold"

@@ -112,6 +112,21 @@ class HoldStrategy(Strategy):
         return StrategyResult()
 
 
+class RecordingBalanceStrategy(Strategy):
+    def __init__(self) -> None:
+        super().__init__(name="recording-balance")
+        self.account_balances: list[Money] = []
+
+    def on_start(self, context: StrategyContext) -> StrategyResult:
+        self.account_balances.append(context.account_balance)
+        return StrategyResult()
+
+    def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
+        _ = tick
+        _ = context
+        return StrategyResult()
+
+
 class CountingStateStrategy(Strategy):
     def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
         _ = tick
@@ -245,6 +260,35 @@ def test_task_manager_start_backtest_returns_task_run_handle() -> None:
     assert run.current().status == TaskStatus.COMPLETED
     assert final_task.id == run.id
     assert final_task.status == TaskStatus.COMPLETED
+
+
+def test_backtest_strategy_context_uses_task_initial_balance() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+        initial_balance=Money.of("3000000", "JPY"),
+    )
+    tick = Tick(
+        instrument=instrument,
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        bid=Money.of("150.10", "JPY"),
+        ask=Money.of("150.12", "JPY"),
+    )
+    strategy = RecordingBalanceStrategy()
+
+    with TaskManager(max_workers=1) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=OneTickDataSource(tick),
+            strategy=strategy,
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.COMPLETED
+    assert strategy.account_balances == [Money.of("3000000", "JPY")]
 
 
 def test_task_manager_configures_strategy_request_timeout() -> None:

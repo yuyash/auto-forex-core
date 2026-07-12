@@ -14,6 +14,8 @@ from core.results.models import (
 )
 from core.results.store_contracts import ResultBatch
 
+type ResultRecord = StrategyEventRecord | TradeSummary | CycleSummary | TaskSummary | ProfitMetric
+
 
 class InMemoryResultStore:
     """Thread-safe in-memory result store for notebooks and tests."""
@@ -94,3 +96,33 @@ class InMemoryResultStore:
         """Return profit metrics."""
         with self._lock:
             return tuple(self._metrics.values())
+
+    def event_records(self, task_id: object | None = None) -> tuple[StrategyEventRecord, ...]:
+        """Return event records, optionally filtered by task."""
+        return self._filter_task(self.events, task_id=task_id)
+
+    def trade_summaries(self, task_id: object | None = None) -> tuple[TradeSummary, ...]:
+        """Return trade summaries, optionally filtered by task."""
+        return self._filter_task(self.trades, task_id=task_id)
+
+    def cycle_summaries(self, task_id: object | None = None) -> tuple[CycleSummary, ...]:
+        """Return cycle summaries, optionally filtered by task."""
+        return self._filter_task(self.cycles, task_id=task_id)
+
+    def task_summaries(self, task_id: object | None = None) -> tuple[TaskSummary, ...]:
+        """Return task summaries, optionally filtered by task."""
+        return self._filter_task(self.tasks, task_id=task_id)
+
+    def profit_metrics(self, task_id: object | None = None) -> tuple[ProfitMetric, ...]:
+        """Return profit metrics, optionally filtered by task."""
+        return self._filter_task(self.metrics, task_id=task_id)
+
+    @staticmethod
+    def _filter_task[RecordT: ResultRecord](
+        records: tuple[RecordT, ...],
+        *,
+        task_id: object | None,
+    ) -> tuple[RecordT, ...]:
+        if task_id is None:
+            return records
+        return tuple(record for record in records if str(record.task_id) == str(task_id))

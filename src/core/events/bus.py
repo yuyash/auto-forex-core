@@ -29,12 +29,10 @@ EventT = TypeVar("EventT", bound=Event)
 
 @dataclass(frozen=True, slots=True)
 class EventPublication:
-    """Result of publishing one event to matching handlers."""
+    """Result of successfully publishing one event to matching handlers."""
 
     event: Event
     delivered_count: int
-    failed_count: int = 0
-    failure_events: tuple[Event, ...] = ()
 
 
 class EventHandlerError(RuntimeError):
@@ -95,17 +93,13 @@ class EventBus:
         """Publish one event to all handlers."""
         events = self._events_to_publish(event)
         delivered_count = 0
-        failure_events: list[Event] = []
         for published_event in events:
             publication = self._publish_one(published_event)
             delivered_count += publication.delivered_count
-            failure_events.extend(publication.failure_events)
 
         return EventPublication(
             event=event,
             delivered_count=delivered_count,
-            failed_count=len(failure_events),
-            failure_events=tuple(failure_events),
         )
 
     def _publish_one(self, event: Event) -> EventPublication:

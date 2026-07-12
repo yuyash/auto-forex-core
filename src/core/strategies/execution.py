@@ -127,6 +127,72 @@ class StrategyEventRequest(Event):
         }
 
 
+class StrategyFillPriceMetadata:
+    """Build metadata fields for broker fill prices."""
+
+    DEFAULT_OPEN_KEYS = ("filled_entry_price",)
+    DEFAULT_CLOSE_KEYS: tuple[str, ...] = ()
+
+    @classmethod
+    def for_event(cls, event: StrategyEventRequest, fill_price: Money) -> Metadata:
+        """Return fill-price metadata for a strategy request."""
+        return Metadata.of(**{key: str(fill_price) for key in cls.keys_for(event) if key})
+
+    @classmethod
+    def keys_for(cls, event: StrategyEventRequest) -> tuple[str, ...]:
+        """Return metadata keys that should receive the broker fill price."""
+        configured_keys = event.metadata.get("filled_price_metadata_keys")
+        if configured_keys is not None:
+            return cls._key_tuple(configured_keys)
+        configured_key = event.metadata.get("filled_price_metadata_key")
+        if configured_key is not None:
+            return cls._key_tuple(configured_key)
+        if event.action == StrategyAction.OPEN_TRADE:
+            return cls.DEFAULT_OPEN_KEYS
+        if event.action == StrategyAction.CLOSE_TRADE:
+            return cls.DEFAULT_CLOSE_KEYS
+        return ()
+
+    @classmethod
+    def _key_tuple(cls, value: object) -> tuple[str, ...]:
+        if isinstance(value, str):
+            return (value.strip(),)
+        if isinstance(value, tuple | list | frozenset):
+            return tuple(str(item).strip() for item in value if str(item).strip())
+        text = str(value).strip()
+        if not text:
+            return ()
+        return (text,)
+
+
+class StrategyExecutionMetadataBuilder:
+    """Build execution metadata without strategy-specific close reason logic."""
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        event: StrategyEventRequest,
+        order: Order | None,
+        metadata: Metadata,
+        filled: bool,
+    ) -> Metadata:
+        """Return broker execution metadata for a response."""
+        if order is None:
+            return metadata
+        metadata = metadata.merge(order.metadata)
+        if order.broker_order_id is not None:
+            metadata = metadata.with_value("broker_order_id", str(order.broker_order_id))
+        metadata = metadata.with_value("order_status", order.status.value)
+        if not filled:
+            return metadata
+
+        fill_price = order.average_fill_price or order.price
+        if fill_price is None:
+            return metadata
+        return metadata.merge(StrategyFillPriceMetadata.for_event(event, fill_price))
+
+
 class StrategyExecutionResponse(Event):
     """Broker execution response returned to a strategy for state reconciliation."""
 
@@ -169,7 +235,16 @@ class StrategyExecutionResponse(Event):
         object.__setattr__(self, "type", report_type)
         object.__setattr__(self, "source", EventSource.BROKER)
         object.__setattr__(self, "message_key", report_type.message_key)
-        object.__setattr__(self, "metadata", self._execution_metadata())
+        object.__setattr__(
+            self,
+            "metadata",
+            StrategyExecutionMetadataBuilder.build(
+                event=self.event,
+                order=self.order,
+                metadata=self.metadata,
+                filled=self.filled,
+            ),
+        )
         return self
 
     @property
@@ -185,52 +260,6 @@ class StrategyExecutionResponse(Event):
     def filled(self) -> bool:
         """Return whether the broker order filled any units."""
         return self.order is not None and self.order.filled_units > 0
-
-    def _execution_metadata(self) -> Metadata:
-        metadata = self.metadata
-        if self.order is None:
-            return metadata
-        metadata = metadata.merge(self.order.metadata)
-        if self.order.broker_order_id is not None:
-            metadata = metadata.with_value("broker_order_id", str(self.order.broker_order_id))
-        metadata = metadata.with_value("order_status", self.order.status.value)
-        if not self.filled:
-            return metadata
-
-        fill_price = self.order.average_fill_price or self.order.price
-        if fill_price is None:
-            return metadata
-
-        return metadata.merge(self._filled_price_metadata(fill_price))
-
-    def _filled_price_metadata(self, fill_price: Money) -> Metadata:
-        if self.event.action == StrategyAction.OPEN_TRADE:
-            if self._metadata_bool(self.event.metadata.get("is_rebuild", False)):
-                return Metadata.of(
-                    filled_entry_price=str(fill_price),
-                    filled_rebuild_price=str(fill_price),
-                )
-            return Metadata.of(filled_entry_price=str(fill_price))
-
-        if self.event.action != StrategyAction.CLOSE_TRADE:
-            return Metadata()
-
-        close_reason = str(self.event.metadata.get("close_reason", ""))
-        if close_reason in {
-            "take_profit",
-            "counter_take_profit",
-            "layer_initial_take_profit",
-        }:
-            return Metadata.of(filled_take_profit_price=str(fill_price))
-        if close_reason == "stop_loss":
-            return Metadata.of(filled_stop_loss_price=str(fill_price))
-        return Metadata.of(filled_close_price=str(fill_price))
-
-    @staticmethod
-    def _metadata_bool(value: object) -> bool:
-        if isinstance(value, bool):
-            return value
-        return str(value).lower() in {"1", "true", "yes"}
 
 
 class StrategyEvent(Event):

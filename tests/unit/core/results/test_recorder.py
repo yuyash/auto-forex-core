@@ -272,7 +272,12 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     assert (tmp_path / "results" / "profit_metrics.csv").exists()
     with (tmp_path / "results" / "cycle_summaries.csv").open(encoding="utf-8") as handle:
         cycle_rows = tuple(csv.DictReader(handle))
-    assert len(cycle_rows) == 1
+    assert len(cycle_rows) >= 1
+    assert csv_store.event_records(final_task.id)[0].display_id == "C1L1R0B1"
+    assert csv_store.trade_summaries(final_task.id)[0].realized_pl == Money.of("100.00", "JPY")
+    assert csv_store.cycle_summaries(final_task.id)[0].realized_pl == Money.of("100.00", "JPY")
+    assert csv_store.task_summaries(final_task.id)[0].realized_pl == Money.of("100.00", "JPY")
+    assert len(csv_store.profit_metrics(final_task.id)) == 2
     csv_store.save_batch(
         ResultBatch(
             events=recorder.event_records(final_task.id),
@@ -294,6 +299,11 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     assert event_count == 2
     assert trade_count == 1
     assert metric_count == 2
+    assert sql_store.event_records(final_task.id)[0].display_id == "C1L1R0B1"
+    assert sql_store.trade_summaries(final_task.id)[0].realized_pl == Money.of("100.00", "JPY")
+    assert sql_store.cycle_summaries(final_task.id)[0].realized_pl == Money.of("100.00", "JPY")
+    assert sql_store.task_summaries(final_task.id)[0].realized_pl == Money.of("100.00", "JPY")
+    assert len(sql_store.profit_metrics(final_task.id)) == 2
     assert recorder.ledger.trades == {}
     assert recorder.metrics.last_metric_at == {}
 

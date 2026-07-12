@@ -158,7 +158,10 @@ class TestStrategyEvent:
             units=Units("1000"),
             price=Money.of("149.92", "JPY"),
             display_id="C1L1R0B2",
-            metadata=Metadata.of(is_rebuild=True),
+            metadata=Metadata.of(
+                is_rebuild=True,
+                filled_price_metadata_keys=("filled_entry_price", "filled_rebuild_price"),
+            ),
         )
 
         report = StrategyExecutionResponse(
