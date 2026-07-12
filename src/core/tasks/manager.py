@@ -1,19 +1,16 @@
-"""Task manager responsible for starting and controlling runners."""
+"""Task manager facade for starting and controlling local task executions."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from concurrent.futures import Future, ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from threading import RLock
-from time import perf_counter
 from types import TracebackType
-from typing import Literal, Self, cast
+from typing import Self, cast
 from uuid import UUID
 
-from core.clock import Clock, ManualClock, SystemClock
+from core.clock import Clock
 from core.events.bus import EventBus, EventHandler
 from core.events.event import Event
 from core.events.types import EventSource, EventType
@@ -23,16 +20,17 @@ from core.sources.base import DataSource
 from core.strategies.base import Strategy
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
+from core.tasks.launching import TaskLauncher, TaskRunnerFactory
+from core.tasks.monitors import StrategyRequestTimeoutMonitor
 from core.tasks.observers import TaskObserver
-from core.tasks.profiling import TaskProfile, TaskProfiler, TaskProfilingConfig
+from core.tasks.profiling import TaskProfile, TaskProfilingConfig
 from core.tasks.progress import TaskProgress, TaskProgressReporter
 from core.tasks.registry import InMemoryTaskRegistry, TaskRegistry
-from core.tasks.runner import BacktestRunner, TaskExecutionControl, TradingRunner
+from core.tasks.runtime import RunnerType, TaskRuntimeRegistry
 from core.tasks.state import TaskAction, TaskStatus
+from core.tasks.waiting import BacktestProgressCalculator, TaskWaiter
 
 type Task = ExecutableTask
-
-RunnerType = Literal["backtest", "trading"]
 
 
 class TaskAlreadyRunningError(RuntimeError):
@@ -96,20 +94,6 @@ class TaskRun:
         return TaskRun(task=task, _manager=self._manager)
 
 
-@dataclass(frozen=True, slots=True)
-class TaskRuntime:
-    """Runtime dependencies and state for a managed task."""
-
-    type: RunnerType
-    data_source: DataSource
-    strategy: Strategy
-    broker: Broker | None
-    clock: Clock
-    control: TaskExecutionControl
-    profiler: TaskProfiler
-    future: Future[Task]
-
-
 class TaskManager:
     """Start, stop, pause, restart, and inspect local task executions."""
 
@@ -122,6 +106,7 @@ class TaskManager:
         observers: Iterable[TaskObserver] = (),
         max_workers: int = 4,
         strategy_request_timeout: timedelta | None = None,
+        strategy_request_timeout_check_interval: timedelta | None = None,
     ) -> None:
         self.registry = registry or InMemoryTaskRegistry()
         self.event_bus = event_bus or EventBus(strategy_request_timeout=strategy_request_timeout)
@@ -133,8 +118,28 @@ class TaskManager:
             if hasattr(observer, "handle"):
                 self.event_bus.subscribe(cast(EventHandler, observer))
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._runtimes: dict[UUID, TaskRuntime] = {}
-        self._lock = RLock()
+        self.runtimes = TaskRuntimeRegistry()
+        self.runner_factory = TaskRunnerFactory(
+            event_bus=self.event_bus,
+            registry=self.registry,
+            observers=self.observers,
+        )
+        self.launcher = TaskLauncher(
+            executor=self._executor,
+            runner_factory=self.runner_factory,
+            default_profiling=self.profiling,
+        )
+        self.waiter = TaskWaiter(registry=self.registry, progress_snapshot=self.progress)
+        interval = StrategyRequestTimeoutMonitor.interval_for(
+            configured=strategy_request_timeout_check_interval,
+            timeout=self.event_bus.strategy_request_timeout,
+        )
+        self.strategy_request_timeout_monitor = StrategyRequestTimeoutMonitor(
+            event_bus=self.event_bus,
+            registry=self.registry,
+            runtimes=self.runtimes,
+            interval=interval,
+        )
 
     def __enter__(self) -> Self:
         """Return this manager for context-managed task execution."""
@@ -162,7 +167,7 @@ class TaskManager:
         profiling: TaskProfilingConfig | None = None,
     ) -> TaskRun:
         """Start a backtest task in the background."""
-        clock = ManualClock(definition.start_at)
+        clock = self.runner_factory.clock_for_definition(definition)
         started = ExecutableTask.from_definition(definition, clock=clock).start(clock=clock)
         self.registry.save(started)
         self._launch(
@@ -189,7 +194,7 @@ class TaskManager:
         if not definition.dry_run and broker is None:
             msg = "trading task requires broker when dry_run is false"
             raise ValueError(msg)
-        clock = SystemClock()
+        clock = self.runner_factory.clock_for_definition(definition)
         started = ExecutableTask.from_definition(definition, clock=clock).start(clock=clock)
         self.registry.save(started)
         self._launch(
@@ -209,7 +214,7 @@ class TaskManager:
 
     def pause(self, task_id: UUID) -> Task:
         """Request a graceful task pause."""
-        runtime = self._runtime(task_id)
+        runtime = self.runtimes.get(task_id)
         runtime.control.request_pause()
         task = self.registry.get(task_id)
         if task.can(TaskAction.PAUSE):
@@ -220,7 +225,7 @@ class TaskManager:
 
     def stop(self, task_id: UUID) -> Task:
         """Request a graceful task stop."""
-        runtime = self._runtime(task_id)
+        runtime = self.runtimes.get(task_id)
         runtime.control.request_stop()
         task = self.registry.get(task_id)
         if task.can(TaskAction.STOP):
@@ -231,13 +236,13 @@ class TaskManager:
 
     def restart(self, task_id: UUID, *, timeout: float | None = None) -> Task:
         """Restart a task using the same runtime dependencies."""
-        runtime = self._runtime(task_id)
+        runtime = self.runtimes.get(task_id)
         if not runtime.future.done():
             runtime.control.request_stop()
             runtime.future.result(timeout=timeout)
 
         current_task = self.registry.get(task_id)
-        clock = self._clock_for_task(current_task, runtime.type)
+        clock = self.runner_factory.clock_for_task(current_task, runtime.type)
         restarted = self.registry.save(current_task.restart(clock=clock))
         self._launch(
             restarted,
@@ -259,13 +264,9 @@ class TaskManager:
         refresh_seconds: float = 0.5,
     ) -> Task:
         """Wait for the current runner to finish and return the latest task."""
-        runtime = self._runtime(task_id)
-        if progress is None:
-            runtime.future.result(timeout=timeout)
-            return self.registry.get(task_id)
-        return self._wait_with_progress(
+        return self.waiter.wait(
             task_id,
-            runtime=runtime,
+            runtime=self.runtimes.get(task_id),
             timeout=timeout,
             progress=progress,
             refresh_seconds=refresh_seconds,
@@ -273,7 +274,7 @@ class TaskManager:
 
     def progress(self, task_id: UUID) -> TaskProgress:
         """Return a point-in-time progress snapshot for the task run."""
-        runtime = self._runtime(task_id)
+        runtime = self.runtimes.get(task_id)
         task = self.registry.get(task_id)
         current_at = runtime.clock.now()
         if isinstance(task.definition, BacktestTaskDefinition):
@@ -292,13 +293,12 @@ class TaskManager:
 
     def profile(self, task_id: UUID) -> TaskProfile:
         """Return a point-in-time profiling snapshot for the task run."""
-        return self._runtime(task_id).profiler.snapshot()
+        return self.runtimes.get(task_id).profiler.snapshot()
 
     def shutdown(self, *, wait: bool = True) -> None:
         """Shut down the task executor."""
-        with self._lock:
-            runtimes = tuple(self._runtimes.values())
-        for runtime in runtimes:
+        self.strategy_request_timeout_monitor.shutdown(wait=wait)
+        for runtime in self.runtimes.values():
             if not runtime.future.done():
                 runtime.control.request_stop()
         self._executor.shutdown(wait=wait)
@@ -314,158 +314,46 @@ class TaskManager:
         clock: Clock,
         profiling: TaskProfilingConfig | None = None,
     ) -> None:
-        with self._lock:
-            current = self._runtimes.get(task.id)
-            if current is not None and not current.future.done():
-                current_task = self.registry.get(task.id)
-                if self._is_active_task(current_task):
-                    msg = f"task already has an active runner: {task.id}"
-                    raise TaskAlreadyRunningError(msg)
-            active_strategy_task_id = self._active_strategy_task_id(
-                strategy,
-                exclude_task_id=task.id,
-            )
-            if active_strategy_task_id is not None:
-                msg = (
-                    "strategy instance already has an active runner: "
-                    f"{strategy.name} for task {active_strategy_task_id}"
-                )
-                raise StrategyAlreadyRunningError(msg)
+        current = self.runtimes.current(task.id)
+        if current is not None and not current.future.done():
+            current_task = self.registry.get(task.id)
+            if self.runtimes.is_active_task(current_task):
+                msg = f"task already has an active runner: {task.id}"
+                raise TaskAlreadyRunningError(msg)
 
-            control = TaskExecutionControl()
-            profiler = self._profiler_for(task, type=type, profiling=profiling)
-            runner = self._runner(
-                task,
-                type=type,
-                data_source=data_source,
-                strategy=strategy,
-                broker=broker,
-                clock=clock,
-                profiler=profiler,
+        active_strategy_task_id = self.runtimes.active_strategy_task_id(
+            strategy,
+            exclude_task_id=task.id,
+            active_tasks=self._active_task_snapshots(),
+        )
+        if active_strategy_task_id is not None:
+            msg = (
+                "strategy instance already has an active runner: "
+                f"{strategy.name} for task {active_strategy_task_id}"
             )
-            future = cast(Future[Task], self._executor.submit(profiler.run, runner.run, control))
-            self._runtimes[task.id] = TaskRuntime(
-                type=type,
-                data_source=data_source,
-                strategy=strategy,
-                broker=broker,
-                clock=clock,
-                control=control,
-                profiler=profiler,
-                future=future,
-            )
+            raise StrategyAlreadyRunningError(msg)
 
-    def _runner(
-        self,
-        task: Task,
-        *,
-        type: RunnerType,
-        data_source: DataSource,
-        strategy: Strategy,
-        broker: Broker | None,
-        clock: Clock,
-        profiler: TaskProfiler,
-    ) -> BacktestRunner | TradingRunner:
-        if type == "backtest":
-            if not isinstance(task.definition, BacktestTaskDefinition):
-                msg = "backtest runner requires BacktestTaskDefinition"
-                raise TypeError(msg)
-            return BacktestRunner(
-                task=task,
-                data_source=data_source,
-                strategy=strategy,
-                broker=broker,
-                event_bus=self.event_bus,
-                registry=self.registry,
-                clock=clock,
-                profiler=profiler,
-                observers=self.observers,
-            )
-
-        if not isinstance(task.definition, TradingTaskDefinition):
-            msg = "trading runner requires TradingTaskDefinition"
-            raise TypeError(msg)
-        return TradingRunner(
-            task=task,
+        runtime = self.launcher.launch(
+            task,
+            type=type,
             data_source=data_source,
             strategy=strategy,
             broker=broker,
-            event_bus=self.event_bus,
-            registry=self.registry,
             clock=clock,
-            profiler=profiler,
-            observers=self.observers,
+            profiling=profiling,
         )
+        self.runtimes.save(task.id, runtime)
 
-    def _runtime(self, task_id: UUID) -> TaskRuntime:
-        with self._lock:
-            return self._runtimes[task_id]
-
-    def _wait_with_progress(
-        self,
-        task_id: UUID,
-        *,
-        runtime: TaskRuntime,
-        timeout: float | None,
-        progress: TaskProgressReporter,
-        refresh_seconds: float,
-    ) -> Task:
-        if refresh_seconds <= 0:
-            msg = "refresh_seconds must be greater than zero"
-            raise ValueError(msg)
-
-        deadline = None if timeout is None else perf_counter() + timeout
-        finished = False
-        progress.on_start(self.progress(task_id))
-        try:
-            while True:
-                if runtime.future.done():
-                    runtime.future.result(timeout=0)
-                    task = self.registry.get(task_id)
-                    progress.on_finish(self.progress(task_id))
-                    finished = True
-                    return task
-
-                poll_seconds = self._wait_poll_seconds(
-                    deadline=deadline,
-                    refresh_seconds=refresh_seconds,
-                )
-                try:
-                    runtime.future.result(timeout=poll_seconds)
-                except FutureTimeoutError:
-                    progress.on_update(self.progress(task_id))
-                    continue
-
-                task = self.registry.get(task_id)
-                progress.on_finish(self.progress(task_id))
-                finished = True
-                return task
-        finally:
-            if not finished:
-                progress.close()
-
-    @staticmethod
-    def _wait_poll_seconds(*, deadline: float | None, refresh_seconds: float) -> float:
-        if deadline is None:
-            return refresh_seconds
-        remaining_seconds = deadline - perf_counter()
-        if remaining_seconds <= 0:
-            raise FutureTimeoutError()
-        return min(refresh_seconds, remaining_seconds)
-
-    def _profiler_for(
-        self,
-        task: Task,
-        *,
-        type: RunnerType,
-        profiling: TaskProfilingConfig | None,
-    ) -> TaskProfiler:
-        return TaskProfiler(
-            task_id=task.id,
-            task_name=task.name,
-            task_type=type,
-            config=profiling or self.profiling,
-        )
+    def _active_task_snapshots(self) -> tuple[Task, ...]:
+        snapshots: list[Task] = []
+        for task_id, runtime in self.runtimes.items():
+            if runtime.future.done():
+                continue
+            try:
+                snapshots.append(self.registry.get(task_id))
+            except Exception:
+                continue
+        return tuple(snapshots)
 
     def _backtest_progress(self, task: Task, *, current_at: datetime) -> TaskProgress:
         if not isinstance(task.definition, BacktestTaskDefinition):
@@ -475,8 +363,11 @@ class TaskManager:
         if task.status == TaskStatus.COMPLETED:
             current_at = definition.end_at
         total_seconds = (definition.end_at - definition.start_at).total_seconds()
-        elapsed_seconds = (current_at - definition.start_at).total_seconds()
-        completed_seconds = max(0.0, min(total_seconds, elapsed_seconds))
+        completed_seconds = BacktestProgressCalculator.completed_seconds(
+            start_at=definition.start_at,
+            end_at=definition.end_at,
+            current_at=current_at,
+        )
         return TaskProgress(
             task_id=task.id,
             task_name=task.name,
@@ -488,34 +379,6 @@ class TaskManager:
             total_units=total_seconds,
             unit="s",
         )
-
-    def _clock_for_task(self, task: Task, type: RunnerType) -> Clock:
-        if type == "backtest":
-            if not isinstance(task.definition, BacktestTaskDefinition):
-                msg = "backtest clock requires BacktestTaskDefinition"
-                raise TypeError(msg)
-            return ManualClock(task.definition.start_at)
-        return SystemClock()
-
-    @staticmethod
-    def _is_active_task(task: Task) -> bool:
-        return task.status in {TaskStatus.STARTING, TaskStatus.RUNNING, TaskStatus.PAUSED}
-
-    def _active_strategy_task_id(
-        self,
-        strategy: Strategy,
-        *,
-        exclude_task_id: UUID,
-    ) -> UUID | None:
-        for task_id, runtime in self._runtimes.items():
-            if task_id == exclude_task_id:
-                continue
-            if runtime.strategy is not strategy or runtime.future.done():
-                continue
-            task = self.registry.get(task_id)
-            if self._is_active_task(task):
-                return task_id
-        return None
 
     def _publish_task_event(
         self,

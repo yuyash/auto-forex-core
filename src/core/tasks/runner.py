@@ -17,7 +17,6 @@ from core.models.metadata import Metadata
 from core.orders.executor import StrategyEventExecutor
 from core.ports.brokers import Broker
 from core.sources.base import DataSource
-from core.sources.models import Tick
 from core.strategies.base import Strategy, StrategyContext, StrategyResult
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
@@ -25,6 +24,7 @@ from core.tasks.failure import TaskFailure
 from core.tasks.observers import TaskObserver
 from core.tasks.profiling import TaskProfiler
 from core.tasks.registry import TaskRegistry
+from core.tasks.runner_support import TaskContextStore, TaskExecutionMode, TaskObserverNotifier
 from core.tasks.state import TaskAction
 
 type Task = ExecutableTask
@@ -218,6 +218,13 @@ class TaskRunner(ABC):
         self.registry = registry
         self.observers = tuple(observers)
         self.clock = clock or SystemClock()
+        self.observer_notifier = TaskObserverNotifier(
+            observers=observers,
+            event_bus=event_bus,
+            clock=self.clock,
+            task_id=task.id,
+        )
+        self.context_store = TaskContextStore(registry)
         self.profiler = profiler or TaskProfiler(
             task_id=task.id,
             task_name=task.name,
@@ -233,7 +240,7 @@ class TaskRunner(ABC):
             strategy=strategy,
             event_executor=StrategyEventExecutor(
                 broker=broker,
-                dry_run=self._dry_run_for_task(task, broker=broker),
+                dry_run=TaskExecutionMode.dry_run_for(task, broker=broker),
             ),
             event_bus=event_bus,
         )
@@ -242,56 +249,8 @@ class TaskRunner(ABC):
     def run(self, control: TaskExecutionControl | None = None) -> Task:
         """Run the task until completion, stop, pause, or failure."""
 
-    @staticmethod
-    def _dry_run_for_task(task: Task, *, broker: Broker | None) -> bool:
-        if isinstance(task.definition, TradingTaskDefinition):
-            return task.definition.dry_run
-        return broker is None
-
-    def _notify_tick(self, task: Task, tick: Tick) -> None:
-        for observer in self.observers:
-            try:
-                observer.on_tick(task, tick)
-            except Exception as exc:
-                try:
-                    self._publish_observer_error(observer, exc)
-                except Exception:
-                    pass
-                raise
-
-    def _notify_finished(self, task: Task) -> Task:
-        if not task.is_terminal:
-            return task
-        for observer in self.observers:
-            try:
-                observer.on_task_finished(task)
-            except Exception as exc:
-                try:
-                    self._publish_observer_error(observer, exc)
-                except Exception:
-                    pass
-                raise
-        return task
-
-    def _publish_observer_error(self, observer: TaskObserver, exc: Exception) -> None:
-        observer_type = f"{observer.__class__.__module__}.{observer.__class__.__qualname__}"
-        self.event_bus.publish(
-            Event(
-                type=EventType.ERROR_OCCURRED,
-                timestamp=self.clock.now(),
-                task_id=self.task.id,
-                source=EventSource.CORE,
-                metadata=Metadata.of(
-                    observer_type=observer_type,
-                    exception_type=exc.__class__.__name__,
-                    exception_message=str(exc),
-                ),
-            )
-        )
-
     def _save_context_state(self, context: StrategyContext) -> Task:
-        task = self.registry.get(context.task_id)
-        saved = self.registry.save(task.with_strategy_state(context.state))
+        saved = self.context_store.save(context)
         self.task = saved
         return saved
 
@@ -301,7 +260,7 @@ class TaskRunner(ABC):
             reason=f"task {task.status.value}",
             timestamp=self.clock.now(),
         )
-        return self._notify_finished(task)
+        return self.observer_notifier.finished(task)
 
 
 class BacktestRunner(TaskRunner):
@@ -319,6 +278,7 @@ class BacktestRunner(TaskRunner):
         self._ensure_manual_clock(definition.start_at)
         self._set_clock(definition.start_at)
         task = self.lifecycle.ensure_running()
+        self.task = task
         if not isinstance(task.definition, BacktestTaskDefinition):
             msg = "backtest runner requires BacktestTaskDefinition"
             raise TypeError(msg)
@@ -350,7 +310,7 @@ class BacktestRunner(TaskRunner):
                 tick_result = self.strategy.on_tick(tick, context)
                 context = self.pipeline.process_result(tick_result, context)
                 task = self._save_context_state(context)
-                self._notify_tick(task, tick)
+                self.observer_notifier.tick(task, tick)
 
             self._set_clock(definition.end_at)
             self.event_bus.expire_pending_strategy_requests(
@@ -373,6 +333,7 @@ class BacktestRunner(TaskRunner):
         if isinstance(self.clock, SystemClock):
             self.clock = ManualClock(start_at)
             self.lifecycle.clock = self.clock
+            self.observer_notifier.clock = self.clock
 
     def _set_clock(self, timestamp: datetime) -> None:
         if isinstance(self.clock, ManualClock):
@@ -388,6 +349,7 @@ class TradingRunner(TaskRunner):
         """Run the trading task against a live tick stream."""
         execution_control = control or TaskExecutionControl()
         task = self.lifecycle.ensure_running()
+        self.task = task
         if not isinstance(task.definition, TradingTaskDefinition):
             msg = "trading runner requires TradingTaskDefinition"
             raise TypeError(msg)
@@ -413,7 +375,7 @@ class TradingRunner(TaskRunner):
                 tick_result = self.strategy.on_tick(tick, context)
                 context = self.pipeline.process_result(tick_result, context)
                 task = self._save_context_state(context)
-                self._notify_tick(task, tick)
+                self.observer_notifier.tick(task, tick)
 
             stop_result = self.strategy.on_stop(context)
             context = self.pipeline.process_result(stop_result, context)

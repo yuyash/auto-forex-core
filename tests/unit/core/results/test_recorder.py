@@ -5,29 +5,38 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 from core import (
     BacktestTaskDefinition,
     CsvResultStore,
     CurrencyPair,
+    CycleSummary,
     DataSource,
     Metadata,
     Money,
+    ProfitMetric,
+    ResultBatch,
     SqlResultStore,
     Strategy,
     StrategyAction,
     StrategyContext,
     StrategyDecisionCode,
     StrategyDecisionReason,
+    StrategyEvent,
+    StrategyEventRecord,
     StrategyEventRequest,
     StrategyResult,
     TaskManager,
     TaskResultRecorder,
     TaskStatus,
+    TaskSummary,
     Tick,
     TradeSide,
+    TradeSummary,
     Units,
+    new_uuid,
 )
 
 
@@ -169,6 +178,36 @@ class OpenOnlyStrategy(Strategy):
         )
 
 
+class RecordingResultStore:
+    def __init__(self, *, fail_once: bool = False) -> None:
+        self.fail_once = fail_once
+        self.save_batch_count = 0
+        self.batches: list[ResultBatch] = []
+
+    def save_event(self, record: StrategyEventRecord) -> None:
+        self.save_batch(ResultBatch(events=(record,)))
+
+    def save_trade(self, summary: TradeSummary) -> None:
+        self.save_batch(ResultBatch(trades=(summary,)))
+
+    def save_cycle(self, summary: CycleSummary) -> None:
+        self.save_batch(ResultBatch(cycles=(summary,)))
+
+    def save_task(self, summary: TaskSummary) -> None:
+        self.save_batch(ResultBatch(tasks=(summary,)))
+
+    def save_metric(self, metric: ProfitMetric) -> None:
+        self.save_batch(ResultBatch(metrics=(metric,)))
+
+    def save_batch(self, batch: ResultBatch) -> None:
+        self.save_batch_count += 1
+        if self.fail_once:
+            self.fail_once = False
+            msg = "store failed once"
+            raise RuntimeError(msg)
+        self.batches.append(batch)
+
+
 def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     tmp_path: Path,
 ) -> None:
@@ -230,6 +269,18 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     with (tmp_path / "results" / "cycle_summaries.csv").open(encoding="utf-8") as handle:
         cycle_rows = tuple(csv.DictReader(handle))
     assert len(cycle_rows) == 1
+    csv_store.save_batch(
+        ResultBatch(
+            events=recorder.event_records(final_task.id),
+            metrics=recorder.memory.metrics,
+        )
+    )
+    with (tmp_path / "results" / "strategy_events.csv").open(encoding="utf-8") as handle:
+        event_rows = tuple(csv.DictReader(handle))
+    with (tmp_path / "results" / "profit_metrics.csv").open(encoding="utf-8") as handle:
+        metric_rows = tuple(csv.DictReader(handle))
+    assert len(event_rows) == 2
+    assert len(metric_rows) == 2
 
     with sql_store.engine.connect() as connection:
         event_count = connection.execute(text("select count(*) from strategy_events")).scalar_one()
@@ -239,6 +290,8 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     assert event_count == 2
     assert trade_count == 1
     assert metric_count == 2
+    assert recorder._trades == {}
+    assert recorder._last_metric_at == {}
 
 
 def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path) -> None:
@@ -288,3 +341,37 @@ def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path
     with sql_store.engine.connect() as connection:
         trade_count = connection.execute(text("select count(*) from trade_summaries")).scalar_one()
     assert trade_count == 1
+    assert recorder._trades == {}
+
+
+def test_task_result_recorder_keeps_store_buffers_independent_on_flush_failure() -> None:
+    successful_store = RecordingResultStore()
+    failing_store = RecordingResultStore(fail_once=True)
+    recorder = TaskResultRecorder(
+        stores=(successful_store, failing_store),
+        flush_every=100,
+    )
+    task_id = new_uuid()
+    request = StrategyEventRequest(
+        task_id=task_id,
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        action=StrategyAction.HOLD,
+        instrument=CurrencyPair.of("USD_JPY"),
+    )
+    recorder.handle(
+        StrategyEvent(
+            task_id=task_id,
+            instrument=request.instrument,
+            request=request,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="store failed once"):
+        recorder.flush()
+
+    recorder.flush()
+
+    assert successful_store.save_batch_count == 1
+    assert failing_store.save_batch_count == 2
+    assert len(successful_store.batches) == 1
+    assert len(failing_store.batches) == 1

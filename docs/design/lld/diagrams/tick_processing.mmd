@@ -90,6 +90,10 @@ sequenceDiagram
             Pipeline-->>Runner: updated context
         end
 
-        Runner->>Registry: save(task.with_strategy_state(context.state))
+        alt context.state changed
+            Runner->>Registry: save(task.with_strategy_state(context.state))
+        else state unchanged
+            Runner-->>Runner: skip registry save
+        end
         Runner->>Observer: on_tick(task, tick)
     end

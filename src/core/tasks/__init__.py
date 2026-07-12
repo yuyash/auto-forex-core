@@ -71,7 +71,7 @@ _LAZY_EXPORTS = {
     "TaskExecutionControl": "core.tasks.runner",
     "TaskManager": "core.tasks.manager",
     "TaskRun": "core.tasks.manager",
-    "TaskRuntime": "core.tasks.manager",
+    "TaskRuntime": "core.tasks.runtime",
     "StrategyAlreadyRunningError": "core.tasks.manager",
     "TradingRunner": "core.tasks.runner",
 }

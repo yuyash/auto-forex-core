@@ -7,6 +7,7 @@ sequenceDiagram
     participant State as TradeState
     participant Metric as ProfitMetric
     participant Memory as InMemoryResultStore
+    participant Buffer as ResultBatchBuffer
     participant Store as External ResultStore
     participant MetricStore as ProfitMetricStore
 
@@ -29,13 +30,17 @@ sequenceDiagram
             Recorder->>Metric: create(realized_pl, unrealized_pl, total_pl)
             Metric-->>Recorder: ProfitMetric
             Recorder->>Memory: save_metric(metric)
-            Recorder->>Recorder: queue metric for external result stores
+            loop each external store buffer
+                Recorder->>Buffer: add_metric(metric)
+            end
             loop metric_stores
                 Recorder->>MetricStore: save_metric(metric)
             end
             alt result batch is due
-                loop external result stores
+                loop each external result store with pending metrics
+                    Recorder->>Buffer: batch()
                     Recorder->>Store: save_batch(ResultBatch(metrics=...))
+                    Recorder->>Buffer: clear()
                 end
             end
             Recorder->>Recorder: _last_metric_at[task.id] = tick.timestamp

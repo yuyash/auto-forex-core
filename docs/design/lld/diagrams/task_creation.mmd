@@ -14,7 +14,7 @@ sequenceDiagram
     participant Pool as ThreadPoolExecutor
     participant Run as TaskRun
 
-    App->>Manager: __init__(registry?, event_bus?, profiling?, observers?, strategy_request_timeout?)
+    App->>Manager: __init__(registry?, event_bus?, profiling?, observers?, strategy_request_timeout?, check_interval?)
     alt event_bus omitted
         Manager->>Bus: create(strategy_request_timeout)
     else event_bus supplied and timeout supplied
@@ -24,6 +24,9 @@ sequenceDiagram
         alt observer implements handle(event)
             Manager->>Bus: subscribe(observer)
         end
+    end
+    alt strategy_request_timeout is configured
+        Manager->>Manager: start trading pending-request monitor thread
     end
 
     alt backtest task

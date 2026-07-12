@@ -7,20 +7,27 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event as ThreadEvent
 from threading import Timer
+from time import sleep
 from types import ModuleType
 from typing import Any
 
 import pytest
 
 from core import (
+    Account,
+    AccountId,
     BacktestTaskDefinition,
     CurrencyPair,
     DataSource,
+    EventBus,
+    InMemoryTaskRegistry,
     Metadata,
     Money,
     Strategy,
+    StrategyAction,
     StrategyAlreadyRunningError,
     StrategyContext,
+    StrategyEventRequest,
     StrategyResult,
     StrategyState,
     TaskManager,
@@ -28,6 +35,9 @@ from core import (
     TaskProgress,
     TaskStatus,
     Tick,
+    TradeSide,
+    TradingTaskDefinition,
+    Units,
 )
 
 
@@ -63,6 +73,36 @@ class TwoTickDataSource(DataSource):
         _ = start_at
         _ = end_at
         yield from self._ticks
+
+
+class BlockingLiveDataSource(DataSource):
+    def __init__(self) -> None:
+        self.entered = ThreadEvent()
+        self.release = ThreadEvent()
+
+    def _raw_ticks(
+        self,
+        *,
+        instrument: CurrencyPair,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> Iterable[Tick]:
+        _ = instrument
+        _ = start_at
+        _ = end_at
+        self.entered.set()
+        self.release.wait(timeout=2)
+        yield from ()
+
+
+class CountingTaskRegistry(InMemoryTaskRegistry):
+    def __init__(self) -> None:
+        super().__init__()
+        self.save_count = 0
+
+    def save(self, task: Any) -> Any:
+        self.save_count += 1
+        return super().save(task)
 
 
 class HoldStrategy(Strategy):
@@ -250,6 +290,89 @@ def test_task_manager_persists_latest_strategy_state() -> None:
 
     assert final_task.status == TaskStatus.COMPLETED
     assert final_task.strategy_state == StrategyState.of(seen_ticks=2)
+
+
+def test_task_manager_skips_registry_save_when_strategy_state_is_unchanged() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    ticks = (
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            bid=Money.of("150.10", "JPY"),
+            ask=Money.of("150.12", "JPY"),
+        ),
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, 1, tzinfo=UTC),
+            bid=Money.of("150.20", "JPY"),
+            ask=Money.of("150.22", "JPY"),
+        ),
+    )
+    registry = CountingTaskRegistry()
+
+    with TaskManager(registry=registry, max_workers=1) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=TwoTickDataSource(ticks),
+            strategy=HoldStrategy(name="hold"),
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.COMPLETED
+    assert registry.save_count == 2
+
+
+def test_task_manager_expires_trading_pending_requests_without_ticks() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    data_source = BlockingLiveDataSource()
+    bus = EventBus(record_history=True, strategy_request_timeout=timedelta(milliseconds=50))
+    definition = TradingTaskDefinition(
+        name="Trading USD_JPY",
+        instrument=instrument,
+        account=Account(id=AccountId.of("test-account")),
+        dry_run=True,
+    )
+
+    with TaskManager(
+        event_bus=bus,
+        strategy_request_timeout_check_interval=timedelta(milliseconds=10),
+        max_workers=1,
+    ) as manager:
+        run = manager.start_trading(
+            definition,
+            data_source=data_source,
+            strategy=HoldStrategy(name="hold"),
+        )
+        assert data_source.entered.wait(timeout=2)
+        request = StrategyEventRequest(
+            timestamp=datetime.now().astimezone() - timedelta(seconds=1),
+            task_id=run.id,
+            action=StrategyAction.OPEN_TRADE,
+            instrument=instrument,
+            side=TradeSide.BUY,
+            units=Units("1000"),
+            price=Money.of("150.10", "JPY"),
+            display_id="C1L1R0B1",
+        )
+
+        bus.publish(request)
+        for _ in range(100):
+            if bus.pending_strategy_request_count == 0:
+                break
+            sleep(0.01)
+        run.stop()
+        data_source.release.set()
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.STOPPED
+    assert bus.pending_strategy_request_count == 0
+    assert any(event.metadata.get("pending_strategy_request") is True for event in bus.history)
 
 
 def test_task_manager_rejects_active_strategy_instance_reuse() -> None:

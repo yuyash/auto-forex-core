@@ -16,6 +16,7 @@ sequenceDiagram
     participant Pipeline as StrategyExecutionPipeline
     participant Source as DataSource
     participant Observer as TaskObserver
+    participant Monitor as TimeoutMonitor
 
     App->>Run: wait(timeout?, progress?)
     Run->>Manager: wait(task_id, timeout, progress)
@@ -55,7 +56,11 @@ sequenceDiagram
         Strategy-->>Runner: StrategyResult(events, state?)
         Runner->>Pipeline: process_result(start_result, context)
         Pipeline-->>Runner: updated context
-        Runner->>Registry: save(task.with_strategy_state(context.state))
+        alt context.state changed
+            Runner->>Registry: save(task.with_strategy_state(context.state))
+        else state unchanged
+            Runner-->>Runner: keep current task snapshot
+        end
 
         Runner->>Source: ticks(instrument, start_at?, end_at?)
         Source-->>Runner: iterable tick stream
@@ -76,7 +81,11 @@ sequenceDiagram
                 Runner-->>Profiler: stopped task
             else running
                 Note over Runner,Pipeline: Tick processing is detailed in tick_processing.mmd
-                Runner->>Registry: save(task.with_strategy_state(context.state))
+                alt context.state changed
+                    Runner->>Registry: save(task.with_strategy_state(context.state))
+                else state unchanged
+                    Runner-->>Runner: skip registry save
+                end
                 Runner->>Observer: on_tick(task, tick)
             end
         end
@@ -85,7 +94,11 @@ sequenceDiagram
         Runner->>Strategy: on_stop(context)
         Strategy-->>Runner: StrategyResult(events, state?)
         Runner->>Pipeline: process_result(stop_result, context)
-        Runner->>Registry: save(task.with_strategy_state(context.state))
+        alt context.state changed
+            Runner->>Registry: save(task.with_strategy_state(context.state))
+        else state unchanged
+            Runner-->>Runner: skip registry save
+        end
         alt finite backtest
             Runner->>Lifecycle: complete_current()
             Lifecycle->>Registry: save(task.complete(clock))
@@ -110,4 +123,12 @@ sequenceDiagram
 
         Profiler->>Profiler: write cProfile / pyinstrument outputs when enabled
         Profiler-->>Future: final task
+    end
+
+    par trading timeout monitor thread
+        loop every strategy_request_timeout_check_interval
+            Monitor->>Manager: active trading runtimes
+            Manager-->>Monitor: task ids
+            Monitor->>Bus: expire_pending_strategy_requests(task_id, wall_clock_now)
+        end
     end

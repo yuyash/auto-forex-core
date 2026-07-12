@@ -9,12 +9,14 @@ from threading import RLock
 from typing import TYPE_CHECKING, Protocol, TypeVar, overload
 from uuid import UUID
 
+from core.events.aggregation import StrategyEventAggregator
 from core.events.event import Event
+from core.events.pending_strategy import StrategyRequestTimeout
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
 
 if TYPE_CHECKING:
-    from core.strategies.execution import StrategyEventRequest, StrategyExecutionResponse
+    from core.strategies.execution import StrategyEventRequest
 
 type EventPredicate = Callable[[Event], bool]
 EventT = TypeVar("EventT", bound=Event)
@@ -75,21 +77,20 @@ class EventBus:
             for handler in handlers
         ]
         self._record_history = record_history
-        self._strategy_request_timeout_value = self._strategy_request_timeout(
-            strategy_request_timeout
+        self._strategy_event_aggregator = StrategyEventAggregator(
+            request_timeout=strategy_request_timeout
         )
         self._history: list[Event] = []
-        self._strategy_requests: dict[UUID, StrategyEventRequest] = {}
         self._lock = RLock()
 
     @property
     def strategy_request_timeout(self) -> timedelta | None:
         """Return how long a strategy request may remain without a broker response."""
-        return self._strategy_request_timeout_value
+        return self._strategy_event_aggregator.request_timeout
 
     @strategy_request_timeout.setter
     def strategy_request_timeout(self, timeout: timedelta | None) -> None:
-        self._strategy_request_timeout_value = self._strategy_request_timeout(timeout)
+        self._strategy_event_aggregator.request_timeout = StrategyRequestTimeout.validate(timeout)
 
     def subscribe(
         self,
@@ -168,46 +169,7 @@ class EventBus:
         )
 
     def _events_to_publish(self, event: Event) -> tuple[Event, ...]:
-        from core.strategies.execution import (
-            StrategyEvent,
-            StrategyEventRequest,
-            StrategyExecutionResponse,
-        )
-
-        if isinstance(event, StrategyEventRequest):
-            if event.requires_broker:
-                with self._lock:
-                    self._strategy_requests[event.id] = event
-                return (event,)
-            return (
-                event,
-                StrategyEvent(
-                    task_id=event.task_id,
-                    instrument=event.instrument,
-                    request=event,
-                ),
-            )
-
-        if isinstance(event, StrategyExecutionResponse):
-            request = self._strategy_request_for(event)
-            return (
-                event,
-                StrategyEvent(
-                    task_id=request.task_id,
-                    instrument=request.instrument,
-                    request=request,
-                    response=event,
-                ),
-            )
-
-        return (event,)
-
-    def _strategy_request_for(
-        self,
-        response: StrategyExecutionResponse,
-    ) -> StrategyEventRequest:
-        with self._lock:
-            return self._strategy_requests.pop(response.event.id, response.event)
+        return self._strategy_event_aggregator.events_for(event)
 
     def publish_many(self, events: Iterable[Event]) -> None:
         """Publish events in order."""
@@ -217,14 +179,12 @@ class EventBus:
     @property
     def pending_strategy_requests(self) -> Sequence[StrategyEventRequest]:
         """Return strategy requests waiting for an execution response."""
-        with self._lock:
-            return tuple(self._strategy_requests.values())
+        return self._strategy_event_aggregator.pending_requests
 
     @property
     def pending_strategy_request_count(self) -> int:
         """Return the number of strategy requests waiting for execution responses."""
-        with self._lock:
-            return len(self._strategy_requests)
+        return self._strategy_event_aggregator.pending_request_count
 
     def expire_pending_strategy_requests(
         self,
@@ -234,23 +194,13 @@ class EventBus:
         timeout: timedelta | None = None,
     ) -> tuple[Event, ...]:
         """Fail pending strategy requests older than the configured timeout."""
-        effective_timeout = timeout if timeout is not None else self.strategy_request_timeout
-        effective_timeout = self._strategy_request_timeout(effective_timeout)
-        if effective_timeout is None:
-            return ()
-        expired: list[StrategyEventRequest] = []
-        with self._lock:
-            for request_id, request in tuple(self._strategy_requests.items()):
-                if task_id is not None and request.task_id != task_id:
-                    continue
-                if timestamp - request.timestamp < effective_timeout:
-                    continue
-                expired.append(self._strategy_requests.pop(request_id))
-        return self._publish_pending_strategy_request_errors(
-            expired,
-            reason="strategy execution response timeout",
+        events = self._strategy_event_aggregator.expire_pending(
             timestamp=timestamp,
+            task_id=task_id,
+            timeout=timeout,
         )
+        self.publish_many(events)
+        return events
 
     def clear_pending_strategy_requests(
         self,
@@ -260,17 +210,13 @@ class EventBus:
         timestamp: datetime | None = None,
     ) -> tuple[Event, ...]:
         """Clear pending strategy requests, publishing diagnostics for each request."""
-        cleared: list[StrategyEventRequest] = []
-        with self._lock:
-            for request_id, request in tuple(self._strategy_requests.items()):
-                if task_id is not None and request.task_id != task_id:
-                    continue
-                cleared.append(self._strategy_requests.pop(request_id))
-        return self._publish_pending_strategy_request_errors(
-            cleared,
+        events = self._strategy_event_aggregator.clear_pending(
+            task_id=task_id,
             reason=reason,
             timestamp=timestamp,
         )
+        self.publish_many(events)
+        return events
 
     @property
     def history(self) -> Sequence[Event]:
@@ -348,55 +294,3 @@ class EventBus:
                 exception_message=str(exc),
             ),
         )
-
-    def _publish_pending_strategy_request_errors(
-        self,
-        requests: Sequence[StrategyEventRequest],
-        *,
-        reason: str,
-        timestamp: datetime | None,
-    ) -> tuple[Event, ...]:
-        events = tuple(
-            self._pending_strategy_request_event(
-                request,
-                reason=reason,
-                timestamp=timestamp,
-            )
-            for request in requests
-        )
-        for event in events:
-            self.publish(event)
-        return events
-
-    @staticmethod
-    def _pending_strategy_request_event(
-        request: StrategyEventRequest,
-        *,
-        reason: str,
-        timestamp: datetime | None,
-    ) -> Event:
-        return Event(
-            type=EventType.ERROR_OCCURRED,
-            timestamp=timestamp or request.timestamp,
-            task_id=request.task_id,
-            display_id=request.display_id,
-            source=EventSource.CORE,
-            metadata=Metadata.of(
-                original_event_id=str(request.id),
-                original_event_type=request.type.value,
-                original_event_source=request.source.value,
-                strategy_action=request.action.value,
-                display_id=request.display_id,
-                reason=reason,
-                pending_strategy_request=True,
-            ),
-        )
-
-    @staticmethod
-    def _strategy_request_timeout(timeout: timedelta | None) -> timedelta | None:
-        if timeout is None:
-            return None
-        if timeout <= timedelta(0):
-            msg = "strategy_request_timeout must be greater than zero"
-            raise ValueError(msg)
-        return timeout
