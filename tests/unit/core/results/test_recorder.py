@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -124,6 +125,50 @@ class OpenCloseStrategy(Strategy):
         )
 
 
+class OpenOnlyStrategy(Strategy):
+    def __init__(self) -> None:
+        super().__init__(name="open-only")
+        self._opened = False
+
+    def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
+        if self._opened:
+            return StrategyResult()
+        self._opened = True
+        return StrategyResult(
+            events=(
+                StrategyEventRequest(
+                    timestamp=tick.timestamp,
+                    task_id=context.task_id,
+                    display_id="C1L1R0B1",
+                    action=StrategyAction.OPEN_TRADE,
+                    instrument=tick.instrument,
+                    side=TradeSide.BUY,
+                    units=Units.of("1000"),
+                    price=Money.of("150.12", "JPY"),
+                    reason=StrategyDecisionReason(
+                        code=StrategyDecisionCode.ENTRY_SIGNAL,
+                        rule_id="test.open",
+                    ),
+                    metadata=Metadata.of(
+                        strategy_type="test",
+                        cycle_id=1,
+                        direction="long",
+                        entry_id="C1:L1:S0:REQ:B1",
+                        entry_role="forward",
+                        layer_number=1,
+                        slot_number=0,
+                        build_number=1,
+                        planned_units="1000",
+                        planned_entry_price="150.12 JPY",
+                        filled_entry_price="150.12 JPY",
+                        planned_take_profit_price="150.22 JPY",
+                        planned_stop_loss_price="150.02 JPY",
+                    ),
+                ),
+            )
+        )
+
+
 def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     tmp_path: Path,
 ) -> None:
@@ -182,6 +227,9 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
 
     assert (tmp_path / "results" / "strategy_events.csv").exists()
     assert (tmp_path / "results" / "profit_metrics.csv").exists()
+    with (tmp_path / "results" / "cycle_summaries.csv").open(encoding="utf-8") as handle:
+        cycle_rows = tuple(csv.DictReader(handle))
+    assert len(cycle_rows) == 1
 
     with sql_store.engine.connect() as connection:
         event_count = connection.execute(text("select count(*) from strategy_events")).scalar_one()
@@ -191,3 +239,52 @@ def test_task_result_recorder_aggregates_events_trades_cycles_tasks_and_metrics(
     assert event_count == 2
     assert trade_count == 1
     assert metric_count == 2
+
+
+def test_task_result_recorder_persists_open_trades_at_task_finish(tmp_path: Path) -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    ticks = (
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            bid=Money.of("150.10", "JPY"),
+            ask=Money.of("150.12", "JPY"),
+        ),
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+            bid=Money.of("150.11", "JPY"),
+            ask=Money.of("150.13", "JPY"),
+        ),
+    )
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 1, 0, 2, tzinfo=UTC),
+    )
+    csv_store = CsvResultStore(tmp_path / "results")
+    sql_store = SqlResultStore("sqlite:///:memory:")
+    recorder = TaskResultRecorder(stores=(csv_store, sql_store))
+
+    with TaskManager(max_workers=1, observers=(recorder,)) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=TwoTickDataSource(ticks),
+            strategy=OpenOnlyStrategy(),
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.COMPLETED
+    trade = recorder.trade_summaries(final_task.id)[0]
+    assert not trade.is_closed
+    assert trade.trade_id == "C1L1R0B1"
+
+    with (tmp_path / "results" / "trade_summaries.csv").open(encoding="utf-8") as handle:
+        trade_rows = tuple(csv.DictReader(handle))
+    assert len(trade_rows) == 1
+    assert trade_rows[0]["trade_id"] == "C1L1R0B1"
+
+    with sql_store.engine.connect() as connection:
+        trade_count = connection.execute(text("select count(*) from trade_summaries")).scalar_one()
+    assert trade_count == 1

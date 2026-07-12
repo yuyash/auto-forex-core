@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from core.models.brokers import Order, OrderSide, OrderStatus, Position, PositionSide
+from core.models.brokers import Order, OrderSide, OrderStatus, Position, PositionSide, Trade
 from core.models.metadata import Metadata
+from core.models.values import Units
 from core.orders.factory import OrderFactory
 from core.ports.brokers import Broker
 from core.strategies.execution import (
@@ -116,13 +117,7 @@ class StrategyEventExecutor:
                             side=self._order_side(side),
                             units=units,
                             price=event.price,
-                            metadata=Metadata.of(
-                                event_id=str(event.id),
-                                task_id=str(event.task_id),
-                                reason_code=event.reason.code.value,
-                                reason_rule_id=event.reason.rule_id,
-                                reason_evidence=event.reason.evidence.to_dict(),
-                            ).merge(event.metadata),
+                            metadata=self._order_metadata(event),
                         )
                     ),
                 ),
@@ -133,6 +128,14 @@ class StrategyEventExecutor:
                     event=event,
                     execution_error="broker is required when dry_run is false",
                 ),
+            )
+        logical_trade_id = self._logical_trade_id(event)
+        if logical_trade_id:
+            return self._close_matching_trades(
+                event,
+                side=side,
+                logical_trade_id=logical_trade_id,
+                units=units,
             )
         reports: list[StrategyExecutionResponse] = []
         try:
@@ -164,6 +167,43 @@ class StrategyEventExecutor:
             )
         return tuple(reports)
 
+    def _close_matching_trades(
+        self,
+        event: StrategyEventRequest,
+        *,
+        side: TradeSide,
+        logical_trade_id: str,
+        units: Units | None,
+    ) -> tuple[StrategyExecutionResponse, ...]:
+        if self.broker is None:
+            return ()
+        target_side = self._position_side_closed_by(side)
+        reports: list[StrategyExecutionResponse] = []
+        try:
+            matching_trades = tuple(
+                trade
+                for trade in self.broker.open_trades(instrument=event.instrument)
+                if trade.side == target_side
+                and self._trade_matches_logical_id(trade, logical_trade_id)
+            )
+        except Exception as exc:
+            return (self._execution_exception_response(event, exc),)
+        if not matching_trades:
+            return (
+                StrategyExecutionResponse(
+                    event=event,
+                    execution_error=f"no matching broker trade found: {logical_trade_id}",
+                ),
+            )
+        for trade in matching_trades:
+            try:
+                order = self.broker.close_trade(trade, units=units)
+            except Exception as exc:
+                reports.append(self._execution_exception_response(event, exc))
+                continue
+            reports.append(StrategyExecutionResponse(event=event, order=order))
+        return tuple(reports)
+
     def _matching_position_sides(
         self,
         event: StrategyEventRequest,
@@ -188,6 +228,16 @@ class StrategyEventExecutor:
             average_fill_price=order.price,
         )
 
+    def _order_metadata(self, event: StrategyEventRequest) -> Metadata:
+        return Metadata.of(
+            event_id=str(event.id),
+            task_id=str(event.task_id),
+            logical_trade_id=self._logical_trade_id(event),
+            reason_code=event.reason.code.value,
+            reason_rule_id=event.reason.rule_id,
+            reason_evidence=event.reason.evidence.to_dict(),
+        ).merge(event.metadata)
+
     @staticmethod
     def _execution_exception_response(
         event: StrategyEventRequest,
@@ -205,3 +255,47 @@ class StrategyEventExecutor:
     @staticmethod
     def _position_side_closed_by(side: TradeSide) -> PositionSide:
         return PositionSide.SHORT if side == TradeSide.BUY else PositionSide.LONG
+
+    @staticmethod
+    def _logical_trade_id(event: StrategyEventRequest) -> str:
+        candidates = (
+            event.display_id,
+            event.metadata.get("logical_trade_id"),
+            event.metadata.get("entry_id"),
+        )
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            value = str(candidate).strip()
+            if value:
+                return value
+        return ""
+
+    @classmethod
+    def _trade_matches_logical_id(cls, trade: Trade, logical_trade_id: str) -> bool:
+        return logical_trade_id in cls._trade_logical_ids(trade)
+
+    @classmethod
+    def _trade_logical_ids(cls, trade: Trade) -> frozenset[str]:
+        values = {
+            str(trade.id),
+            cls._metadata_text(trade.metadata, "logical_trade_id"),
+            cls._metadata_text(trade.metadata, "client_trade_id"),
+            cls._client_extension_id(trade.metadata),
+        }
+        return frozenset(value for value in values if value)
+
+    @staticmethod
+    def _metadata_text(metadata: Metadata, key: str) -> str:
+        value = metadata.get(key)
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _client_extension_id(metadata: Metadata) -> str:
+        value = metadata.get("clientExtensions") or metadata.get("client_extensions")
+        if not isinstance(value, Mapping):
+            return ""
+        client_id = value.get("id")
+        return "" if client_id is None else str(client_id).strip()

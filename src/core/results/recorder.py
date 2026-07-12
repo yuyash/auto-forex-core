@@ -240,9 +240,11 @@ class TaskResultRecorder:
             self._last_metric_at[task.id] = tick.timestamp
 
     def on_task_finished(self, task: Task) -> None:
-        """Persist final cycle and task summaries."""
+        """Persist final trade, cycle, and task summaries."""
         with self._lock:
             self._task_status[task.id] = task.status.value
+            for summary in self.trade_summaries(task.id):
+                self._save_trade(summary)
             for summary in self.cycle_summaries(task.id):
                 self._save_cycle(summary)
             task_summary = self.task_summary(task)

@@ -39,6 +39,10 @@ class TaskAlreadyRunningError(RuntimeError):
     """Raised when a task already has an active runner."""
 
 
+class StrategyAlreadyRunningError(RuntimeError):
+    """Raised when one strategy instance is assigned to multiple active tasks."""
+
+
 @dataclass(frozen=True, slots=True)
 class TaskRun:
     """Handle for a started task execution."""
@@ -314,6 +318,16 @@ class TaskManager:
                 if self._is_active_task(current_task):
                     msg = f"task already has an active runner: {task.id}"
                     raise TaskAlreadyRunningError(msg)
+            active_strategy_task_id = self._active_strategy_task_id(
+                strategy,
+                exclude_task_id=task.id,
+            )
+            if active_strategy_task_id is not None:
+                msg = (
+                    "strategy instance already has an active runner: "
+                    f"{strategy.name} for task {active_strategy_task_id}"
+                )
+                raise StrategyAlreadyRunningError(msg)
 
             control = TaskExecutionControl()
             profiler = self._profiler_for(task, type=type, profiling=profiling)
@@ -483,6 +497,22 @@ class TaskManager:
     @staticmethod
     def _is_active_task(task: Task) -> bool:
         return task.status in {TaskStatus.STARTING, TaskStatus.RUNNING, TaskStatus.PAUSED}
+
+    def _active_strategy_task_id(
+        self,
+        strategy: Strategy,
+        *,
+        exclude_task_id: UUID,
+    ) -> UUID | None:
+        for task_id, runtime in self._runtimes.items():
+            if task_id == exclude_task_id:
+                continue
+            if runtime.strategy is not strategy or runtime.future.done():
+                continue
+            task = self.registry.get(task_id)
+            if self._is_active_task(task):
+                return task_id
+        return None
 
     def _publish_task_event(
         self,

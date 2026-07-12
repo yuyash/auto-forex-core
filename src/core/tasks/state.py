@@ -113,9 +113,11 @@ class TaskStateMachine:
                 },
                 TaskStatus.STOPPED: {
                     TaskAction.RESTART: TaskStatus.RUNNING,
+                    TaskAction.FAIL: TaskStatus.FAILED,
                 },
                 TaskStatus.COMPLETED: {
                     TaskAction.RESTART: TaskStatus.RUNNING,
+                    TaskAction.FAIL: TaskStatus.FAILED,
                 },
                 TaskStatus.FAILED: {
                     TaskAction.RESTART: TaskStatus.RUNNING,

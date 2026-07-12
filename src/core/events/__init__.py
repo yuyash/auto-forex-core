@@ -1,6 +1,12 @@
 """Domain events exported by the Core package."""
 
-from core.events.bus import EventBus, EventHandler, EventPublication, EventSubscription
+from core.events.bus import (
+    EventBus,
+    EventHandler,
+    EventHandlerError,
+    EventPublication,
+    EventSubscription,
+)
 from core.events.errors import (
     ErrorCategory,
     ErrorCode,
@@ -25,6 +31,7 @@ __all__ = [
     "EventBus",
     "EventError",
     "EventHandler",
+    "EventHandlerError",
     "EventMessageKey",
     "EventPublication",
     "EventSeverity",

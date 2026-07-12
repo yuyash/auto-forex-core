@@ -19,6 +19,7 @@ from core import (
     Metadata,
     Money,
     Strategy,
+    StrategyAlreadyRunningError,
     StrategyContext,
     StrategyResult,
     TaskManager,
@@ -51,6 +52,17 @@ class HoldStrategy(Strategy):
         _ = tick
         _ = context
         return StrategyResult()
+
+
+class FailingFinishedObserver:
+    def on_tick(self, task: object, tick: Tick) -> None:
+        _ = task
+        _ = tick
+
+    def on_task_finished(self, task: object) -> None:
+        _ = task
+        msg = "result store failed"
+        raise RuntimeError(msg)
 
 
 class RecordingProgressReporter:
@@ -170,6 +182,58 @@ def test_task_manager_start_backtest_returns_task_run_handle() -> None:
     assert final_task.status == TaskStatus.COMPLETED
 
 
+def test_task_manager_rejects_active_strategy_instance_reuse() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    second_definition = BacktestTaskDefinition(
+        name="Second Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    first_tick = Tick(
+        instrument=instrument,
+        timestamp=datetime(2026, 1, 1, 12, tzinfo=UTC),
+        bid=Money.of("150.10", "JPY"),
+        ask=Money.of("150.12", "JPY"),
+    )
+    second_tick = Tick(
+        instrument=instrument,
+        timestamp=datetime(2026, 1, 1, 18, tzinfo=UTC),
+        bid=Money.of("150.20", "JPY"),
+        ask=Money.of("150.22", "JPY"),
+    )
+    first_tick_processed = ThreadEvent()
+    release_second_tick = ThreadEvent()
+    strategy = HoldStrategy(name="hold")
+
+    with TaskManager(max_workers=2) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=TwoTickBlockingDataSource(
+                first_tick=first_tick,
+                second_tick=second_tick,
+                first_tick_processed=first_tick_processed,
+                release_second_tick=release_second_tick,
+            ),
+            strategy=strategy,
+        )
+        assert first_tick_processed.wait(timeout=2)
+        with pytest.raises(StrategyAlreadyRunningError):
+            manager.start_backtest(
+                second_definition,
+                data_source=OneTickDataSource(first_tick),
+                strategy=strategy,
+            )
+        release_second_tick.set()
+        assert run.wait(timeout=2).status == TaskStatus.COMPLETED
+
+
 def test_task_manager_preserves_failure_exception_details() -> None:
     instrument = CurrencyPair.of("USD_JPY")
     definition = BacktestTaskDefinition(
@@ -193,6 +257,34 @@ def test_task_manager_preserves_failure_exception_details() -> None:
     assert final_task.failure.cause_type == "RuntimeError"
     assert "_raw_ticks" in final_task.failure.traceback
     assert "RuntimeError: source failed" in final_task.failure.traceback
+
+
+def test_task_manager_marks_task_failed_when_finish_observer_fails() -> None:
+    instrument = CurrencyPair.of("USD_JPY")
+    definition = BacktestTaskDefinition(
+        name="Backtest USD_JPY",
+        instrument=instrument,
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    tick = Tick(
+        instrument=instrument,
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        bid=Money.of("150.10", "JPY"),
+        ask=Money.of("150.12", "JPY"),
+    )
+
+    with TaskManager(max_workers=1, observers=(FailingFinishedObserver(),)) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=OneTickDataSource(tick),
+            strategy=HoldStrategy(name="hold"),
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.FAILED
+    assert final_task.failure is not None
+    assert final_task.failure.message == "result store failed"
 
 
 def test_task_run_progress_reports_backtest_clock_position() -> None:

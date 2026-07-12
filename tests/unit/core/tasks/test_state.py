@@ -14,6 +14,7 @@ class TestState:
             == TaskStatus.COMPLETED
         )
         assert TaskAction.RESTART in state_machine.allowed_actions(TaskStatus.COMPLETED)
+        assert state_machine.next_status(TaskStatus.COMPLETED, TaskAction.FAIL) == TaskStatus.FAILED
         assert any(
             transition.source == TaskStatus.RUNNING
             and transition.action == TaskAction.FAIL

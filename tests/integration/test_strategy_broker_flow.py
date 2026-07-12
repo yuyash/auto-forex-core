@@ -19,11 +19,14 @@ from core import (
     StrategyContext,
     StrategyDecisionCode,
     StrategyDecisionReason,
+    StrategyEventExecutor,
     StrategyEventRequest,
     StrategyParameters,
     StrategyResult,
     TaskType,
     Tick,
+    Trade,
+    TradeSide,
     Units,
     new_uuid,
 )
@@ -70,6 +73,8 @@ class HoldStrategy(Strategy):
 class MemoryBroker(Broker):
     def __init__(self) -> None:
         self.orders: list[Order] = []
+        self.closed_trades: list[Trade] = []
+        self.closed_positions: list[tuple[Position, PositionSide]] = []
 
     def place_order(self, order: Order) -> Order:
         self.orders.append(order)
@@ -87,6 +92,7 @@ class MemoryBroker(Broker):
         side: PositionSide,
         units: Units | None = None,
     ) -> Order:
+        self.closed_positions.append((position, side))
         state = position.require_side(side)
         amount = units if units is not None else state.units
         return Order(
@@ -112,6 +118,34 @@ class MemoryBroker(Broker):
         if instrument is not None and instrument != position.instrument:
             return ()
         return (position,)
+
+    def trades(self, *, instrument: CurrencyPair | None = None) -> Sequence[Trade]:
+        trade = Trade.model_validate(
+            {
+                "id": "broker-trade-1",
+                "instrument": USD_JPY,
+                "side": PositionSide.LONG,
+                "units": Units("1000"),
+                "price": Money.of("150.10", "JPY"),
+                "metadata": Metadata.of(client_trade_id="C1L1R0B1"),
+            }
+        )
+        if instrument is not None and instrument != trade.instrument:
+            return ()
+        return (trade,)
+
+    def close_trade(self, trade: Trade, *, units: Units | None = None) -> Order:
+        self.closed_trades.append(trade)
+        amount = units or trade.units
+        return Order(
+            status=OrderStatus.FILLED,
+            broker_order_id=BrokerOrderId.of("close-trade-order-1"),
+            instrument=trade.instrument,
+            side=OrderSide.SELL if trade.side == PositionSide.LONG else OrderSide.BUY,
+            units=amount,
+            filled_units=amount,
+            average_fill_price=trade.price,
+        )
 
 
 class TestStrategyBrokerFlow:
@@ -153,3 +187,27 @@ class TestStrategyBrokerFlow:
         assert strategy.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
         assert placed_order.status == OrderStatus.FILLED
         assert broker.orders[0].metadata == Metadata.of(event_id="event-1")
+
+    def test_strategy_event_executor_closes_matching_logical_trade(self) -> None:
+        broker = MemoryBroker()
+        executor = StrategyEventExecutor(broker=broker)
+        event = StrategyEventRequest(
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            task_id=new_uuid(),
+            display_id="C1L1R0B1",
+            action=StrategyAction.CLOSE_TRADE,
+            instrument=USD_JPY,
+            side=TradeSide.SELL,
+            units=Units("1000"),
+            price=Money.of("150.20", "JPY"),
+            reason=StrategyDecisionReason(
+                code=StrategyDecisionCode.EXIT_SIGNAL,
+                rule_id="snowball.close.take_profit",
+            ),
+        )
+
+        reports = executor.execute(event)
+
+        assert reports[0].filled
+        assert tuple(str(trade.id) for trade in broker.closed_trades) == ("broker-trade-1",)
+        assert broker.closed_positions == []

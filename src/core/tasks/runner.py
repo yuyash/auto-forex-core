@@ -252,7 +252,11 @@ class TaskRunner(ABC):
             try:
                 observer.on_tick(task, tick)
             except Exception as exc:
-                self._publish_observer_error(observer, exc)
+                try:
+                    self._publish_observer_error(observer, exc)
+                except Exception:
+                    pass
+                raise
 
     def _notify_finished(self, task: Task) -> Task:
         if not task.is_terminal:
@@ -261,7 +265,11 @@ class TaskRunner(ABC):
             try:
                 observer.on_task_finished(task)
             except Exception as exc:
-                self._publish_observer_error(observer, exc)
+                try:
+                    self._publish_observer_error(observer, exc)
+                except Exception:
+                    pass
+                raise
         return task
 
     def _publish_observer_error(self, observer: TaskObserver, exc: Exception) -> None:
@@ -330,7 +338,10 @@ class BacktestRunner(TaskRunner):
             return self._notify_finished(completed)
         except Exception as exc:
             failed = self.lifecycle.fail_current(exc)
-            return self._notify_finished(failed)
+            try:
+                return self._notify_finished(failed)
+            except Exception:
+                return failed
 
     def _ensure_manual_clock(self, start_at: datetime) -> None:
         if isinstance(self.clock, SystemClock):
@@ -378,4 +389,7 @@ class TradingRunner(TaskRunner):
             return self._notify_finished(stopped)
         except Exception as exc:
             failed = self.lifecycle.fail_current(exc)
-            return self._notify_finished(failed)
+            try:
+                return self._notify_finished(failed)
+            except Exception:
+                return failed

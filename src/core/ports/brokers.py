@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from core.models.brokers import Order, Position, PositionSide
+from core.models.brokers import Order, Position, PositionSide, Trade
 from core.models.money import CurrencyPair
 from core.models.values import Units
 
@@ -56,5 +56,25 @@ class PositionReader(ABC):
         return positions[0]
 
 
-class Broker(OrderExecutor, PositionCloser, PositionReader):
+class TradeCloser(ABC):
+    """Port for closing a specific broker trade."""
+
+    @abstractmethod
+    def close_trade(self, trade: Trade, *, units: Units | None = None) -> Order:
+        """Close all or part of one open broker trade."""
+
+
+class TradeReader(ABC):
+    """Port for reading broker trades."""
+
+    @abstractmethod
+    def trades(self, *, instrument: CurrencyPair | None = None) -> Sequence[Trade]:
+        """Return broker trades."""
+
+    def open_trades(self, *, instrument: CurrencyPair | None = None) -> Sequence[Trade]:
+        """Return open broker trades."""
+        return tuple(trade for trade in self.trades(instrument=instrument) if trade.state == "open")
+
+
+class Broker(OrderExecutor, PositionCloser, PositionReader, TradeCloser, TradeReader):
     """Minimal broker contract required by strategy execution."""

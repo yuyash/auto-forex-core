@@ -146,15 +146,27 @@ class CsvResultStore:
 
     def save_trade(self, summary: TradeSummary) -> None:
         """Persist one trade summary."""
-        self._append("trade_summaries.csv", _ResultRowMapper.trade(summary))
+        self._upsert(
+            "trade_summaries.csv",
+            _ResultRowMapper.trade(summary),
+            key_fields=("task_id", "trade_id"),
+        )
 
     def save_cycle(self, summary: CycleSummary) -> None:
         """Persist one cycle summary snapshot."""
-        self._append("cycle_summaries.csv", _ResultRowMapper.cycle(summary))
+        self._upsert(
+            "cycle_summaries.csv",
+            _ResultRowMapper.cycle(summary),
+            key_fields=("task_id", "cycle_id"),
+        )
 
     def save_task(self, summary: TaskSummary) -> None:
         """Persist one task summary snapshot."""
-        self._append("task_summaries.csv", _ResultRowMapper.task(summary))
+        self._upsert(
+            "task_summaries.csv",
+            _ResultRowMapper.task(summary),
+            key_fields=("task_id",),
+        )
 
     def save_metric(self, metric: ProfitMetric) -> None:
         """Persist one profit metric."""
@@ -171,6 +183,31 @@ class CsvResultStore:
                 writer.writerow(
                     {key: _ResultRowMapper.csv_value(value) for key, value in row.items()}
                 )
+
+    def _upsert(
+        self,
+        filename: str,
+        row: Mapping[str, Any],
+        *,
+        key_fields: tuple[str, ...],
+    ) -> None:
+        path = self.directory / filename
+        new_row = {key: _ResultRowMapper.csv_value(value) for key, value in row.items()}
+        key = {field: new_row[field] for field in key_fields}
+        with self._lock:
+            rows: list[dict[str, str]] = []
+            if path.exists():
+                with path.open(newline="", encoding="utf-8") as handle:
+                    rows = [
+                        existing
+                        for existing in csv.DictReader(handle)
+                        if any(existing.get(field) != value for field, value in key.items())
+                    ]
+            rows.append(new_row)
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=tuple(new_row.keys()))
+                writer.writeheader()
+                writer.writerows(rows)
 
 
 class SqlResultStore:

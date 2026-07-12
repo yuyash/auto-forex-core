@@ -11,6 +11,7 @@ from core.events import (
     EventBus,
     EventError,
     EventHandler,
+    EventHandlerError,
     EventMessageKey,
     EventPublication,
     EventSeverity,
@@ -56,7 +57,15 @@ from core.models import (
     new_uuid,
 )
 from core.orders import OrderFactory, StrategyEventExecutor
-from core.ports import AccountManager, Broker, OrderExecutor, PositionCloser, PositionReader
+from core.ports import (
+    AccountManager,
+    Broker,
+    OrderExecutor,
+    PositionCloser,
+    PositionReader,
+    TradeCloser,
+    TradeReader,
+)
 from core.providers import TradingProvider
 from core.results import (
     CsvResultStore,
@@ -110,6 +119,7 @@ from core.tasks import (
     BaseTaskDefinition,
     ExecutableTask,
     InMemoryTaskRegistry,
+    StrategyAlreadyRunningError,
     TaskAction,
     TaskAlreadyRunningError,
     TaskDefinition,
@@ -176,6 +186,7 @@ __all__ = [
     "EventBus",
     "EventError",
     "EventHandler",
+    "EventHandlerError",
     "EventMessageKey",
     "EventPublication",
     "EventSeverity",
@@ -218,6 +229,7 @@ __all__ = [
     "SqlResultStore",
     "Strategy",
     "StrategyAction",
+    "StrategyAlreadyRunningError",
     "StrategyContext",
     "StrategyDecisionCode",
     "StrategyDecisionReason",
@@ -258,6 +270,8 @@ __all__ = [
     "TickGranularityFilter",
     "TqdmProgressReporter",
     "Trade",
+    "TradeCloser",
+    "TradeReader",
     "TradeSide",
     "TradeSummary",
     "TradingProvider",

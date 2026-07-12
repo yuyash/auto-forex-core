@@ -19,6 +19,7 @@ from core import (
     Position,
     PositionSide,
     Tick,
+    Trade,
     TradingProvider,
     Units,
 )
@@ -94,6 +95,18 @@ class MemoryBroker(Broker):
     def positions(self, *, instrument: CurrencyPair | None = None) -> Sequence[Position]:
         _ = instrument
         return ()
+
+    def trades(self, *, instrument: CurrencyPair | None = None) -> Sequence[Trade]:
+        _ = instrument
+        return ()
+
+    def close_trade(self, trade: Trade, *, units: Units | None = None) -> Order:
+        _ = units
+        return Order(
+            instrument=trade.instrument,
+            side=OrderSide.SELL if trade.side == PositionSide.LONG else OrderSide.BUY,
+            units=trade.units,
+        )
 
     def close(self) -> None:
         self.closed = True

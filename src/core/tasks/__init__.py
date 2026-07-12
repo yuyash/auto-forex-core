@@ -38,6 +38,7 @@ __all__ = [
     "BaseTaskDefinition",
     "ExecutableTask",
     "InMemoryTaskRegistry",
+    "StrategyAlreadyRunningError",
     "TaskAction",
     "TaskAlreadyRunningError",
     "TaskDefinition",
@@ -71,6 +72,7 @@ _LAZY_EXPORTS = {
     "TaskManager": "core.tasks.manager",
     "TaskRun": "core.tasks.manager",
     "TaskRuntime": "core.tasks.manager",
+    "StrategyAlreadyRunningError": "core.tasks.manager",
     "TradingRunner": "core.tasks.runner",
 }
 

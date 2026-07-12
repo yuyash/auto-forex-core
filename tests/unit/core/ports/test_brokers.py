@@ -7,6 +7,7 @@ from core import (
     OrderStatus,
     Position,
     PositionSide,
+    Trade,
     Units,
 )
 from core.ports import Broker
@@ -47,6 +48,22 @@ class MemoryBroker(Broker):
     def positions(self, *, instrument: CurrencyPair | None = None) -> tuple[Position, ...]:
         _ = instrument
         return ()
+
+    def trades(self, *, instrument: CurrencyPair | None = None) -> tuple[Trade, ...]:
+        _ = instrument
+        return ()
+
+    def close_trade(self, trade: Trade, *, units: Units | None = None) -> Order:
+        amount = units or trade.units
+        return Order(
+            status=OrderStatus.FILLED,
+            broker_order_id=BrokerOrderId.of("close-order-1"),
+            instrument=trade.instrument,
+            side=OrderSide.SELL if trade.side == PositionSide.LONG else OrderSide.BUY,
+            units=amount,
+            filled_units=amount,
+            average_fill_price=trade.price,
+        )
 
 
 class TestBase:

@@ -36,6 +36,17 @@ class EventPublication:
     failure_events: tuple[Event, ...] = ()
 
 
+class EventHandlerError(RuntimeError):
+    """Raised when an event handler fails while processing an event."""
+
+    def __init__(self, *, event: Event, handler: EventHandler, cause: Exception) -> None:
+        self.event = event
+        self.handler = handler
+        self.cause = cause
+        handler_type = f"{handler.__class__.__module__}.{handler.__class__.__qualname__}"
+        super().__init__(f"event handler {handler_type} failed for {event.type.value}: {cause}")
+
+
 @dataclass(frozen=True, slots=True)
 class EventSubscription:
     """One event-bus subscription."""
@@ -121,24 +132,25 @@ class EventBus:
             )
 
         delivered_count = 0
-        failure_events: list[Event] = []
         for subscription in subscriptions:
             try:
                 subscription.handler.handle(event)
             except Exception as exc:
                 failure_event = self._handler_failure_event(event, subscription.handler, exc)
-                failure_events.append(failure_event)
                 with self._lock:
                     if self._record_history:
                         self._history.append(failure_event)
+                raise EventHandlerError(
+                    event=event,
+                    handler=subscription.handler,
+                    cause=exc,
+                ) from exc
             else:
                 delivered_count += 1
 
         return EventPublication(
             event=event,
             delivered_count=delivered_count,
-            failed_count=len(failure_events),
-            failure_events=tuple(failure_events),
         )
 
     def _events_to_publish(self, event: Event) -> tuple[Event, ...]:
