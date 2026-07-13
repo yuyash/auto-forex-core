@@ -28,6 +28,7 @@ from core import (
     StrategyAlreadyRunningError,
     StrategyContext,
     StrategyEventRequest,
+    StrategyParameters,
     StrategyResult,
     StrategyState,
     TaskManager,
@@ -60,6 +61,23 @@ class OneTickDataSource(DataSource):
 
 class TwoTickDataSource(DataSource):
     def __init__(self, ticks: tuple[Tick, Tick]) -> None:
+        self._ticks = ticks
+
+    def _raw_ticks(
+        self,
+        *,
+        instrument: CurrencyPair,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> Iterable[Tick]:
+        _ = instrument
+        _ = start_at
+        _ = end_at
+        yield from self._ticks
+
+
+class SequenceTickDataSource(DataSource):
+    def __init__(self, ticks: tuple[Tick, ...]) -> None:
         self._ticks = ticks
 
     def _raw_ticks(
@@ -125,6 +143,47 @@ class RecordingBalanceStrategy(Strategy):
         _ = tick
         _ = context
         return StrategyResult()
+
+
+class AccountBalanceTradingStrategy(Strategy):
+    def __init__(self) -> None:
+        super().__init__(name="account-balance-trading")
+        self.account_balances: list[Money] = []
+
+    def on_tick(self, tick: Tick, context: StrategyContext) -> StrategyResult:
+        seen_ticks = int(context.state.get("seen_ticks", 0))
+        self.account_balances.append(context.account_balance)
+        events: tuple[StrategyEventRequest, ...] = ()
+        if seen_ticks == 0:
+            events = (
+                StrategyEventRequest(
+                    timestamp=tick.timestamp,
+                    task_id=context.task_id,
+                    display_id="T1",
+                    action=StrategyAction.OPEN_TRADE,
+                    instrument=tick.instrument,
+                    side=TradeSide.BUY,
+                    units=Units("100"),
+                    price=tick.ask,
+                ),
+            )
+        elif seen_ticks == 1:
+            events = (
+                StrategyEventRequest(
+                    timestamp=tick.timestamp,
+                    task_id=context.task_id,
+                    display_id="T1",
+                    action=StrategyAction.CLOSE_TRADE,
+                    instrument=tick.instrument,
+                    side=TradeSide.SELL,
+                    units=Units("100"),
+                    price=tick.bid,
+                ),
+            )
+        return StrategyResult(
+            events=events,
+            state=StrategyState.of(seen_ticks=seen_ticks + 1),
+        )
 
 
 class CountingStateStrategy(Strategy):
@@ -262,14 +321,21 @@ def test_task_manager_start_backtest_returns_task_run_handle() -> None:
     assert final_task.status == TaskStatus.COMPLETED
 
 
-def test_backtest_strategy_context_uses_task_initial_balance() -> None:
+def test_backtest_strategy_context_uses_account_initial_balance_parameter() -> None:
     instrument = CurrencyPair.of("USD_JPY")
     definition = BacktestTaskDefinition(
         name="Backtest USD_JPY",
         instrument=instrument,
+        parameters=StrategyParameters.of(
+            account={
+                "initial_balance": {
+                    "amount": "3000000",
+                    "currency": "JPY",
+                }
+            }
+        ),
         start_at=datetime(2026, 1, 1, tzinfo=UTC),
         end_at=datetime(2026, 1, 2, tzinfo=UTC),
-        initial_balance=Money.of("3000000", "JPY"),
     )
     tick = Tick(
         instrument=instrument,
@@ -289,6 +355,60 @@ def test_backtest_strategy_context_uses_task_initial_balance() -> None:
 
     assert final_task.status == TaskStatus.COMPLETED
     assert strategy.account_balances == [Money.of("3000000", "JPY")]
+
+
+def test_strategy_context_account_balance_tracks_realized_profit() -> None:
+    instrument = CurrencyPair.of("EUR_USD")
+    definition = BacktestTaskDefinition(
+        name="Backtest EUR_USD",
+        instrument=instrument,
+        parameters=StrategyParameters.of(
+            account={
+                "initial_balance": {
+                    "amount": "1000",
+                    "currency": "USD",
+                }
+            }
+        ),
+        start_at=datetime(2026, 1, 1, tzinfo=UTC),
+        end_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    ticks = (
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            bid=Money.of("10", "USD"),
+            ask=Money.of("10", "USD"),
+        ),
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+            bid=Money.of("12", "USD"),
+            ask=Money.of("12", "USD"),
+        ),
+        Tick(
+            instrument=instrument,
+            timestamp=datetime(2026, 1, 1, 0, 2, tzinfo=UTC),
+            bid=Money.of("12", "USD"),
+            ask=Money.of("12", "USD"),
+        ),
+    )
+    strategy = AccountBalanceTradingStrategy()
+
+    with TaskManager(max_workers=1) as manager:
+        run = manager.start_backtest(
+            definition,
+            data_source=SequenceTickDataSource(ticks),
+            strategy=strategy,
+        )
+        final_task = run.wait(timeout=2)
+
+    assert final_task.status == TaskStatus.COMPLETED
+    assert strategy.account_balances == [
+        Money.of("1000", "USD"),
+        Money.of("1000", "USD"),
+        Money.of("1200", "USD"),
+    ]
 
 
 def test_task_manager_configures_strategy_request_timeout() -> None:

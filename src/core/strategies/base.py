@@ -66,6 +66,10 @@ class StrategyContext(DomainModel):
         """Return a copy of this context carrying the given strategy state."""
         return self.model_copy(update={"state": state})
 
+    def with_account_balance(self, account_balance: Money) -> StrategyContext:
+        """Return a copy of this context carrying the latest realized account balance."""
+        return self.model_copy(update={"account_balance": account_balance.require_positive()})
+
 
 class StrategyResult(DomainModel):
     """Strategy output for a single lifecycle or market-data callback."""

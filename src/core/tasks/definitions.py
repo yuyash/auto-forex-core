@@ -13,7 +13,7 @@ from core.logging import get_logger
 from core.models.accounts import Account
 from core.models.base import DomainModel
 from core.models.identifiers import new_uuid
-from core.models.money import CurrencyPair, Money
+from core.models.money import CurrencyPair
 from core.strategies.models import StrategyParameters
 from core.tasks.state import TaskType
 
@@ -59,7 +59,6 @@ class BacktestTaskDefinition(BaseTaskDefinition):
     task_type: Literal[TaskType.BACKTEST] = TaskType.BACKTEST
     start_at: AwareDatetime
     end_at: AwareDatetime
-    initial_balance: Money = Field(default_factory=lambda: Money.of("10000", "USD"))
 
     @model_validator(mode="after")
     def _validate_period(self) -> BacktestTaskDefinition:
@@ -84,15 +83,12 @@ class BacktestTaskDefinition(BaseTaskDefinition):
             )
             msg = "start_at must be earlier than end_at"
             raise ValueError(msg)
-        self.initial_balance.require_positive()
         _LOGGER.debug(
             "Validated backtest task period",
             extra={
                 "task_definition_id": str(self.id),
                 "start_at": self.start_at.isoformat(),
                 "end_at": self.end_at.isoformat(),
-                "initial_balance": str(self.initial_balance.amount),
-                "initial_balance_currency": str(self.initial_balance.currency),
             },
         )
         return self

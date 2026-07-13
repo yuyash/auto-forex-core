@@ -15,12 +15,12 @@ from core.events.bus import EventBus
 from core.events.event import Event
 from core.events.types import EventSource, EventType
 from core.models.metadata import Metadata
-from core.models.money import Money
 from core.orders.executor import StrategyEventExecutor
 from core.ports.brokers import Broker
 from core.sources.base import DataSource
 from core.sources.models import Tick
 from core.strategies.base import Strategy, StrategyContext, StrategyResult
+from core.tasks.accounting import TaskAccountBalanceTracker
 from core.tasks.definitions import BacktestTaskDefinition, TradingTaskDefinition
 from core.tasks.execution import ExecutableTask
 from core.tasks.failure import TaskFailure
@@ -159,10 +159,12 @@ class StrategyExecutionPipeline:
         strategy: Strategy,
         event_executor: StrategyEventExecutor,
         event_bus: EventBus,
+        account_balances: TaskAccountBalanceTracker | None = None,
     ) -> None:
         self.strategy = strategy
         self.event_executor = event_executor
         self.event_bus = event_bus
+        self.account_balances = account_balances or TaskAccountBalanceTracker()
 
     def context(self, task: Task) -> StrategyContext:
         """Create the strategy context for a task."""
@@ -170,17 +172,10 @@ class StrategyExecutionPipeline:
             task_id=task.id,
             task_type=task.task_type,
             instrument=task.instrument,
-            account_balance=self.account_balance(task),
+            account_balance=self.account_balances.balance(task),
             state=task.strategy_state,
             metadata=Metadata.of(strategy_name=self.strategy.name),
         )
-
-    @staticmethod
-    def account_balance(task: Task) -> Money:
-        """Return the Core account balance available to strategy callbacks."""
-        if isinstance(task.definition, BacktestTaskDefinition):
-            return task.definition.initial_balance
-        return Money.of("10000", "USD")
 
     def process_result(
         self,
@@ -200,6 +195,7 @@ class StrategyExecutionPipeline:
         self.event_bus.publish_many(reports)
         if not reports:
             return execution_context
+        execution_context = self.account_balances.apply_reports(execution_context, reports)
         state = self.strategy.on_execution_reports(reports, execution_context)
         if state == execution_context.state:
             return execution_context

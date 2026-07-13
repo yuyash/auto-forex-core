@@ -8,7 +8,6 @@ from core import (
     Account,
     AccountId,
     CurrencyPair,
-    Money,
     StrategyParameters,
 )
 from core.tasks import (
@@ -31,7 +30,6 @@ class TestDefinitions:
         )
 
         assert definition.task_type == TaskType.BACKTEST
-        assert definition.initial_balance == Money.of("10000", "USD")
         assert definition.parameters == StrategyParameters.of(risk_percent=Decimal("1.5"))
 
     def test_backtest_task_definition_rejects_invalid_period(self) -> None:
@@ -53,13 +51,3 @@ class TestDefinitions:
         assert definition.task_type == TaskType.TRADING
         assert definition.account == Account(id=AccountId.of("001"))
         assert definition.dry_run is True
-
-    def test_backtest_task_definition_rejects_non_positive_initial_balance(self) -> None:
-        with pytest.raises(ValidationError, match="money amount must be greater than 0"):
-            BacktestTaskDefinition(
-                name="Invalid balance",
-                instrument=CurrencyPair.of("USD_JPY"),
-                start_at=datetime(2026, 1, 1, tzinfo=UTC),
-                end_at=datetime(2026, 1, 2, tzinfo=UTC),
-                initial_balance=Money.of("0", "USD"),
-            )
